@@ -29,7 +29,7 @@ def _init_state() -> None:
 def _render_sidebar() -> int:
     with st.sidebar:
         st.header("Settings")
-        max_sentences = st.slider("Max sentences in answer", 1, 10, 3)
+        maximum_sentences = st.slider("Max sentences in answer", 1, 10, 3)
         st.caption(f"Model: `{SETTINGS.model_id}`")
         st.caption(f"Provider: `{SETTINGS.provider}`")
 
@@ -49,10 +49,10 @@ def _render_sidebar() -> int:
             st.session_state.transcripts = {strategy: [] for strategy in STRATEGIES}
             st.rerun()
 
-    return max_sentences
+    return maximum_sentences
 
 
-def _render_column(session: Session, max_sentences: int) -> None:
+def _render_column(session: Session, maximum_sentences: int) -> None:
     """Draw one strategy's column: header, its own transcript, and its prompt."""
     st.subheader(LABELS[session.strategy])
     st.caption(f"{len(session.history) // 2} turn(s) in history")
@@ -66,11 +66,11 @@ def _render_column(session: Session, max_sentences: int) -> None:
             st.markdown(text)
 
     st.caption("Prompt actually sent (with placeholder question):")
-    st.code(session.render_prompt("…your next question…", max_sentences), language="text")
+    st.code(session.render_prompt("…your next question…", maximum_sentences), language="text")
 
 
 _init_state()
-max_sentences = _render_sidebar()
+maximum_sentences = _render_sidebar()
 
 st.title("Prompt template comparison")
 st.caption(
@@ -92,7 +92,7 @@ if question:
         with st.spinner(f"{LABELS[strategy]} is thinking…"):
             try:
                 answers[strategy] = st.session_state.sessions[strategy].ask(
-                    question, max_sentences=max_sentences
+                    question, maximum_sentences=maximum_sentences
                 )
             except Exception as exc:  # surface provider/auth errors in the UI
                 answers[strategy] = f"⚠️ Error: {exc}"
@@ -108,4 +108,4 @@ if question:
 left, right = st.columns(2)
 for column, strategy in zip((left, right), STRATEGIES):
     with column:
-        _render_column(st.session_state.sessions[strategy], max_sentences)
+        _render_column(st.session_state.sessions[strategy], maximum_sentences)
