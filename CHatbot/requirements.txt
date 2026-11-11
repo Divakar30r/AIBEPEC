@@ -1,0 +1,16 @@
+# Core LangChain (LCEL) stack
+langchain>=0.3.27,<0.4
+langchain-core>=0.3.72,<0.4
+
+# Hugging Face provider (Inference Providers / HF Endpoint routing)
+langchain-huggingface>=0.3.1
+huggingface_hub>=0.34.0
+
+# Prompt template variable validation
+jinja2>=3.1.4
+
+# Environment variables
+python-dotenv>=1.0.1
+
+# UI
+streamlit>=1.40.0
