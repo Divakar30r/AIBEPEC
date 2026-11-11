@@ -1,0 +1,41 @@
+{
+  "$schema": "https://claude.ai/schemas/settings.json",
+  "permissions": {
+    "allow": [
+      {
+        "type": "edit",
+        "pattern": "CHatbot/**"
+      },
+      {
+        "type": "read",
+        "pattern": "CHatbot/**"
+      },
+      {
+        "type": "read_terminal",
+        "description": "Capture any terminal command stdout/stderr"
+      },
+      {
+        "type": "web_fetch",
+        "pattern": "*"
+      },
+      {
+        "type": "web_search",
+        "pattern": "*"
+      },
+      {
+        "type": "install_package",
+        "pattern": "pypi.org/**"
+      }
+    ],
+    "require_confirmation": [
+      {
+        "type": "delete",
+        "pattern": "CHatbot/**"
+      },
+      {
+        "type": "rename",
+        "pattern": "CHatbot/**"
+      }
+    ]
+  }
+}

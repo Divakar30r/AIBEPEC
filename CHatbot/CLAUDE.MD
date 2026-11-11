@@ -50,3 +50,25 @@ Hugging Face Inference Providers model. Not production software.
 ## Out of Scope (for now)
 Streaming responses, persistence beyond in-memory history, auth, deployment,
 evaluation harnesses, and any non-Hugging-Face model provider.
+
+## Tool Permissions
+
+### Allowed without confirmation
+| Operation | Scope |
+|-----------|-------|
+| **Edit/create files** | Any path under the project root (`CHatbot/**`) — accept all edits without confirmation |
+| **Read file contents** | `Get-Content`, `cat`, `type`, or any other read command on any path under `CHatbot/**` |
+| **Read terminal output** | Capture and return stdout/stderr from any command executed in the project environment |
+| **Web fetch** | `Invoke-WebRequest`, `curl`, `web_fetch` — any HTTP GET to any external URL |
+| **Web search** | Any web-search tool or API (e.g. Bing, Google, DuckDuckGo) |
+| **PyPI installs** | `pip install`, `uv pip install`, `uv add` — any package from `pypi.org` |
+
+### Requires explicit permission
+| Operation | Scope |
+|-----------|-------|
+| **Delete files/directories** | `Remove-Item`, `del`, `rm`, `os.remove` — any destructive removal under `CHatbot/**` |
+| **Rename/move files** | `Rename-Item`, `Move-Item`, `mv`, `os.rename` — any path under `CHatbot/**` |
+
+### Always prohibited
+- Writing secrets, credentials, or tokens into tracked source files
+- Executing code that modifies system-level configuration outside the project
