@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff *)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(unlink *)",
+      "Bash(mv *)",
+      "Bash(git rm *)",
+      "Bash(git clean *)",
+      "Bash(git reset --hard *)",
+      "Bash(git checkout -- *)",
+      "Bash(git restore *)",
+      "Bash(git stash drop *)",
+      "Bash(git stash clear *)",
+      "Bash(git branch -d *)",
+      "Bash(git branch -D *)",
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(ri *)",
+      "PowerShell(rm *)",
+      "PowerShell(del *)",
+      "PowerShell(erase *)",
+      "PowerShell(rd *)",
+      "PowerShell(rmdir *)",
+      "PowerShell(Move-Item *)",
+      "PowerShell(Clear-Content *)",
+      "PowerShell(git rm *)",
+      "PowerShell(git clean *)",
+      "PowerShell(git reset --hard *)",
+      "PowerShell(git checkout -- *)",
+      "PowerShell(git restore *)",
+      "PowerShell(git stash drop *)",
+      "PowerShell(git stash clear *)",
+      "PowerShell(git branch -d *)",
+      "PowerShell(git branch -D *)",
+      "PowerShell(git push *)",
+      "PowerShell(git commit *)"
+    ]
+  }
+}
