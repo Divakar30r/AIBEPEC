@@ -1,0 +1,5 @@
+Branch: BEPEC1 and local/BEPEC1local was created for adding project CHatbot
+change were done by both github accounts (divaakr30r and div@drwork......com on it with checking in from different local folders 
+Initially the local folders were created , later remote branch was created. Did git pull and committed later though with dificulties
+
+Branch: PromptRAG was newly created at local and then directly pushed with git push which created a new branch in remote with same name as local
