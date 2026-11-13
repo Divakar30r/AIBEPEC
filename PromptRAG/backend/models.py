@@ -15,15 +15,9 @@ class Document:
 
 
 @dataclass
-class Hit:
-    content: str
-    source_type: str
-    source: str
-    chunk_index: int
-    score: float  # cosine similarity, higher is better
+class RAGResult:
+    """Semantic-search output for one query plus the LLM's evaluation of it."""
 
-
-@dataclass
-class ChatResponse:
-    answer: str
-    hits: list[Hit]
+    rag_output: dict[str, str]  # file name (git path or pdf name) -> its best matching chunks
+    scores: dict[str, float]  # file name -> LLM eval score, 0.00 - 1.00
+    query: str = ""  # the search input these results belong to

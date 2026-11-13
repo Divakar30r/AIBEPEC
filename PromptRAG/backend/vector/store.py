@@ -10,6 +10,22 @@ from .chunking import chunk_document
 from .embedder import embed_texts
 
 
+def clear_source_type(conn: psycopg.Connection, source_type: str) -> int:
+    """Delete every stored chunk of a source type ("git" or "pdf") ahead of a fresh load.
+
+    Returns the number of chunks deleted.
+    """
+    init_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("DELETE FROM {t} WHERE source_type = %s").format(t=chunks_table()),
+            (source_type,),
+        )
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
+
+
 def ingest_documents(conn: psycopg.Connection, docs: Iterable[Document]) -> int:
     """Chunk, embed and store documents. Re-ingesting a source replaces its old chunks.
 

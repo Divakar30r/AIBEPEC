@@ -9,7 +9,7 @@ import argparse
 
 from . import read_files, read_git
 from .db import connect
-from .vector import ingest_documents
+from .vector import clear_source_type, ingest_documents
 
 
 def main() -> None:
@@ -19,10 +19,12 @@ def main() -> None:
 
     with connect() as conn:
         if args.source in ("git", "all"):
+            print(f"Cleared {clear_source_type(conn, 'git')} old git chunks")
             print("Ingesting GitHub repo...")
             n = ingest_documents(conn, read_git.iter_documents())
             print(f"Git: {n} chunks stored")
         if args.source in ("pdf", "all"):
+            print(f"Cleared {clear_source_type(conn, 'pdf')} old pdf chunks")
             print("Ingesting PDFs...")
             n = ingest_documents(conn, read_files.iter_documents())
             print(f"PDF: {n} chunks stored")

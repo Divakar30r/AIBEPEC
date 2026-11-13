@@ -12,13 +12,14 @@ PromptRAG/
 ├── backend/
 │   ├── config.py            Settings loaded from .env (secrets, DB, models, chunking)
 │   ├── db.py                Postgres connection and PromptRAG_* table/index creation
-│   ├── models.py            Shared dataclasses (Document, Hit, ChatResponse)
+│   ├── models.py            Shared dataclasses (Document, RAGResult)
 │   ├── ingest.py            CLI that loads sources into the vector DB
-│   ├── prompt/              Prompt patterns and query rendering
+│   ├── llm.py               Hugging Face LLM client (OpenAI-compatible provider endpoint)
+│   ├── prompt/              PromptTemplates.py (all prompts) and pattern names
 │   ├── read_git/            Reads a public GitHub repo folder (notebooks, md, txt, py)
 │   ├── read_files/          Reads .pdf files from the PDF folder
 │   ├── vector/              Chunking, OpenAI embeddings, storing into pgvector
-│   └── search/              Semantic search and chat() entry point used by the UI
+│   └── search/              Per-file semantic search, LLM eval score and chat()
 ├── frontend/
 │   └── app.py               Streamlit chatbot UI
 ├── data/
@@ -38,5 +39,8 @@ PromptRAG/
 
 1. **Ingest:** `read_git` and `read_files` produce documents, `vector` chunks and embeds them,
    and they are stored in the `PromptRAG_chunks` table of the `vector_db` Postgres database.
-2. **Chat:** the UI passes the question and chosen prompt patterns to `backend.search.chat()`,
-   which embeds them together, runs a semantic search and returns the answer and its sources.
+2. **Query (once):** the UI sends the query to `backend.search.run_rag()`, which compares it against
+   every file and stores the best chunks per file in a `RAGOutput` dict (file name -> text). The
+   HF LLM then scores each file's text 0.00-1.00 with the zero-shot `zero-shot-eval` template.
+3. **Chat:** the user picks a `chosen_file` and optionally a pattern (few-shot, chain-of-thought)
+   and converses with the LLM via `backend.search.chat()` over the RAG output of all files, focused on the chosen file.

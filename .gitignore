@@ -1,0 +1,3 @@
+# Ignore S1 and Workbooks folders at repo root
+/S1/
+/Workbooks/

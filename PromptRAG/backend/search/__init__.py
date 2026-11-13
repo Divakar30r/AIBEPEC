@@ -1,3 +1,3 @@
-from .search import chat, semantic_search
+from .search import chat, evaluate, list_files, run_rag, semantic_search
 
-__all__ = ["chat", "semantic_search"]
+__all__ = ["chat", "evaluate", "list_files", "run_rag", "semantic_search"]
