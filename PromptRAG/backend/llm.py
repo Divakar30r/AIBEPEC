@@ -3,6 +3,7 @@
 from openai import OpenAI
 
 from .config import settings
+from .prompt_log import log_prompt
 
 _client: OpenAI | None = None
 
@@ -16,8 +17,12 @@ def get_llm_client() -> OpenAI:
     return _client
 
 
-def complete(messages: list[dict[str, str]]) -> str:
-    """Run one chat completion with the configured HF model on the configured provider."""
+def complete(messages: list[dict[str, str]], label: str = "") -> str:
+    """Run one chat completion with the configured HF model on the configured provider.
+
+    `label` only tags the prompt log entry (e.g. the template name).
+    """
+    log_prompt(messages, label)
     model = settings.hf_model_id
     if settings.hf_provider:
         model = f"{model}:{settings.hf_provider}"  # HF router syntax for picking the provider

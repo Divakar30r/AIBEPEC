@@ -20,7 +20,7 @@ def main() -> int:
     except (ValueError, AttributeError):
         return 0
     if TEST_CMD.search(command):
-        print("AUTOTEST is OFF. Run /AUTOTEST ON to re-enable tests.", file=sys.stderr)
+        print("AUTOTEST is OFF. Run /autotest ON to re-enable tests.", file=sys.stderr)
         return 2
     return 0
 

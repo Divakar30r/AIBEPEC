@@ -37,7 +37,11 @@ def fake_backend(monkeypatch):
     search.run_rag, search.chat = run_rag, chat
     search.list_files = lambda: ["few-shot-learning.ipynb", "guide.pdf"]
     monkeypatch.setitem(sys.modules, "backend", pkg)
+    prompt_log = types.ModuleType("backend.prompt_log")
+    prompt_log.start_session = lambda: "session.log"  # no real log file in tests
+    prompt_log.bind_session = lambda path: None
     monkeypatch.setitem(sys.modules, "backend.prompt", prompt)
+    monkeypatch.setitem(sys.modules, "backend.prompt_log", prompt_log)
     monkeypatch.setitem(sys.modules, "backend.search", search)
     return calls
 

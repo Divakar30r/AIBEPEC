@@ -12,6 +12,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.prompt import list_patterns  # noqa: E402
+from backend.prompt_log import bind_session, start_session  # noqa: E402
 from backend.search import chat, list_files, run_rag  # noqa: E402
 
 st.set_page_config(page_title="PromptRAG", page_icon="💬")
@@ -35,6 +36,9 @@ st.session_state.setdefault("messages", [])
 st.session_state.setdefault("rag", None)  # RAGResult once search + evaluation are complete
 st.session_state.setdefault("files", [])
 st.session_state.setdefault("query_in", "")
+if "log_file" not in st.session_state:  # one prompt log per UI session
+    st.session_state.log_file = start_session()
+bind_session(st.session_state.log_file)
 
 
 def reset() -> None:

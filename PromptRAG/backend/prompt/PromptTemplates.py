@@ -5,7 +5,7 @@ A template is a complete chat message list (roles + text). Fetch one with
 Templates use named ``{placeholders}`` only.
 
 Chat templates (rag-default, few-shot, chain-of-thought) share these variables:
-  query (the search input), chosen_file, list_files, eval_scores, rag_outputs, question
+  query (the search input), chosen_file, list_files, eval_scores, rag_outputs_of_chosen_file, question
 (`question` is the user's chat message). `zero-shot-eval` takes: query, file_name, text.
 """
 
@@ -18,10 +18,11 @@ _CONTEXT = (
     "Search input: {query}\n"
     "Files: {list_files}\n"
     "Eval scores (0-1, per file): {eval_scores}\n"
-    "RAG outputs:\n{rag_outputs}"
+    "RAG outputs:\n{rag_outputs_of_chosen_file}"
 )
 
 TEMPLATES: dict[str, list[Message]] = {
+    
     # Zero-shot evaluation of one file's RAG output; run automatically after the semantic search.
     "zero-shot-eval": [
         {
@@ -36,16 +37,18 @@ TEMPLATES: dict[str, list[Message]] = {
             "content": "Query:\n{query}\n\nFile: {file_name}\nRetrieved text:\n{text}",
         },
     ],
+    
     # Chat template used when no pattern name is given.
     "rag-default": [
         {
             "role": "system",
             "content": "Answer using only the RAG outputs below, focusing on the chosen file "
-            "{chosen_file}. Cite files like [guide.pdf]. If they do not contain the answer, "
+             " '''{chosen_file}'''. Cite files like [guide.pdf]. If they do not contain the answer, "
             "say so.\n\n" + _CONTEXT,
         },
         {"role": "user", "content": "{question}"},
     ],
+    
     # Prompt patterns (selectable in the UI).
     "few-shot": [
         {
@@ -54,15 +57,18 @@ TEMPLATES: dict[str, list[Message]] = {
         },
         {
             "role": "user",
-            "content": "Can you explain the score of RAG results against the {chosen_file} "
-            "for the search input {query}?",
+            "content": "Can you explain the score of RAG results against the ''' {chosen_file} ''' "
+            "for the search input '''{query}'''?",
         },
         {
             "role": "assistant",
-            "content": "The eval score of RAG results against {chosen_file} is 0.85, which "
+            "content": "The eval score of RAG results against '''{chosen_file}''' is 0.85, which "
             "indicates a high level of relevance and accuracy in the retrieved information.",
         },
-        {"role": "user", "content": "is the search term present exactly in RAG output?"},
+        {
+            "role": "user",
+            "content": "is the search term present exactly in the RAG output of '''{chosen_file}'''?",
+        },
         {
             "role": "assistant",
             "content": "On searching the RAG output, the search term is present exactly in one "
@@ -70,22 +76,29 @@ TEMPLATES: dict[str, list[Message]] = {
         },
         {"role": "user", "content": "{question}"},
     ],
+    
     "chain-of-thought": [
         {
             "role": "system",
             "content": "You are a helpful assistant and already evaluated RAG outputs against "
             "files for a given search input. Your task is to reason about the RAG output and "
-            "provide insights based on the following questions:\n"
-            "1. Does the RAG output contain the search input exactly in the {chosen_file}?\n"
-            "2. Do the RAG eval scores align with the search input found in the RAG output?\n"
-            "3. If the search input is not found in the RAG output, reason why.\n"
-            "4. If the search input is found in the RAG output, compare the RAG eval score "
+            "provide insights based on the following questions: Also note in UI user selects "
+            "a file name which is '''{chosen_file}'''\n"
+            "1. Answer anything specific to the '''{chosen_file}''' and the search input '''{query}'''.\n"
+            "2.Does the RAG output contain the search input exactly in the '''{chosen_file}'''?\n"
+            "3. Do the RAG eval scores align with the search input found in the RAG output?\n"
+            "4. If the search input is not found in the RAG output, reason why.\n"
+            "5. If the search input is found in the RAG output, compare the RAG eval score "
             "with the other files.\n\n"
-            "Problem: RAG outputs against files {list_files} for the search input {query}, "
-            "on your analysis evaluated scores are {eval_scores}\n\n"
-            "RAG outputs:\n{rag_outputs}",
+            "Problem: RAG outputs against files '''{list_files}''' for the search input '''{query}''', "
+            "on your analysis evaluated scores are '''{eval_scores}'''\n\n"
+            "RAG output of the chosen file:\n{rag_outputs_of_chosen_file}",
         },
-        {"role": "user", "content": "{question}"},
+        
+        {
+            "role": "user",
+            "content": "{question}"
+        },
     ],
 }
 

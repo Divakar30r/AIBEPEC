@@ -54,7 +54,10 @@ def evaluate(query: str, rag_output: RAGOutput) -> dict[str, float]:
     """Ask the LLM (zero-shot) to score each file's retrieved text for the query, 0.00 - 1.00."""
     scores: dict[str, float] = {}
     for file_name, text in rag_output.items():
-        reply = complete(get_prompt("zero-shot-eval", query=query, file_name=file_name, text=text))
+        reply = complete(
+            get_prompt("zero-shot-eval", query=query, file_name=file_name, text=text),
+            label=f"zero-shot-eval: {file_name}",
+        )
         match = re.search(r"\d*\.?\d+", reply)
         if not match:
             raise ValueError(f"Evaluator did not return a score for {file_name}: {reply!r}")
@@ -72,7 +75,9 @@ def run_rag(query: str) -> RAGResult:
 def chat(
     question: str, rag: RAGResult, chosen_file: str, template: str | None = None
 ) -> str:
-    """Converse with the LLM over the RAG output and eval scores of ALL files, for one chosen file.
+    """Converse with the LLM about one chosen file.
+
+    Context = the RAG chunks of the chosen file only, plus the eval scores and names of all files.
 
     `question` is the chat message; `rag.query` is the original search input.
     `template` is a prompt template name (e.g. few-shot, chain-of-thought); default when None.
@@ -88,7 +93,8 @@ def chat(
             chosen_file=chosen_file,
             list_files=", ".join(rag.rag_output),
             eval_scores=_scores_text(rag.scores),
-            rag_outputs=_as_text(rag.rag_output),
+            rag_outputs_of_chosen_file=_as_text({chosen_file: rag.rag_output[chosen_file]}),  # chosen file only
             question=question,
-        )
+        ),
+        label=f"chat: {template or 'rag-default'}, chosen_file={chosen_file}",
     )

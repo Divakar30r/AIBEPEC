@@ -1,5 +1,5 @@
 import psycopg
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import register_vector as pgv_register_vector
 from psycopg import sql
 
 from .config import settings
@@ -21,7 +21,7 @@ def connect() -> psycopg.Connection:
     with conn.cursor() as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
     conn.commit()
-    register_vector(conn)
+    pgv_register_vector(conn)
     return conn
 
 

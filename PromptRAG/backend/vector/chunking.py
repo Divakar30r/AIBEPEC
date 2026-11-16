@@ -8,7 +8,8 @@
 Size and overlap are configurable (TEXT_CHUNK_* and CODE_CHUNK_* in .env).
 """
 
-from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
+from langchain_text_splitters import Language as LC_Language
+from langchain_text_splitters import RecursiveCharacterTextSplitter as LC_RecursiveCharacterTextSplitter
 
 from ..config import settings
 from ..models import Document
@@ -28,7 +29,7 @@ def chunk_text(text: str, size: int | None = None, overlap: int | None = None) -
     _check(size, overlap)
     if not text.strip():
         return []
-    splitter = RecursiveCharacterTextSplitter(
+    splitter = LC_RecursiveCharacterTextSplitter(
         chunk_size=size,
         chunk_overlap=overlap,
         separators=["\n\n", "\n", " ", ""],
@@ -43,8 +44,8 @@ def chunk_python(text: str, size: int | None = None, overlap: int | None = None)
     _check(size, overlap)
     if not text.strip():
         return []
-    splitter = RecursiveCharacterTextSplitter.from_language(
-        Language.PYTHON, chunk_size=size, chunk_overlap=overlap
+    splitter = LC_RecursiveCharacterTextSplitter.from_language(
+        LC_Language.PYTHON, chunk_size=size, chunk_overlap=overlap
     )
     return splitter.split_text(text)
 

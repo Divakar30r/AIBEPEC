@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     code_chunk_overlap: int = 100
     chunks_per_file: int = 2  # best-matching chunks kept per file in the RAG output
 
+    # Prompt log: one file per UI session, holding the prompts sent to the LLM
+    prompt_log_dir: str = "logs"
+
+    @property
+    def prompt_log_path(self) -> Path:
+        p = Path(self.prompt_log_dir)
+        return p if p.is_absolute() else PROJECT_ROOT / p
+
     @property
     def pdf_path(self) -> Path:
         p = Path(self.pdf_dir)

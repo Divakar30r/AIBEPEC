@@ -71,7 +71,7 @@ CHAT_VARS = {
     "chosen_file": "a.pdf",
     "list_files": "a.pdf, b.md",
     "eval_scores": "a.pdf: 0.90, b.md: 0.12",
-    "rag_outputs": "[a.pdf]\nAAA\n\n[b.md]\nBBB",
+    "rag_outputs_of_chosen_file": "[a.pdf]\nAAA\n\n[b.md]\nBBB",
     "question": "Q",
 }
 
@@ -103,23 +103,36 @@ def test_evaluate_scores_each_file_and_clamps(monkeypatch):
 
     out = {"a.pdf": "text", "b.md": "more"}
     replies = iter(["0.734", "Score: 1.5"])
-    monkeypatch.setattr(search, "complete", lambda messages: next(replies))
+    monkeypatch.setattr(search, "complete", lambda messages, label="": next(replies))
     assert search.evaluate("q", out) == {"a.pdf": 0.73, "b.md": 1.0}
-    monkeypatch.setattr(search, "complete", lambda messages: "no idea")
+    monkeypatch.setattr(search, "complete", lambda messages, label="": "no idea")
     with pytest.raises(ValueError):
         search.evaluate("q", out)
 
 
-def test_chat_sends_query_scores_and_all_files(monkeypatch):
+def test_chat_sends_only_chosen_file_chunks_and_all_scores(monkeypatch):
     from backend.models import RAGResult
     from backend.search import search
 
     sent = []
-    monkeypatch.setattr(search, "complete", lambda messages: sent.append(messages) or "ok")
+    monkeypatch.setattr(search, "complete", lambda messages, label="": sent.append(messages) or "ok")
     rag = RAGResult({"a.pdf": "AAA", "b.md": "BBB"}, {"a.pdf": 0.9, "b.md": 0.12}, "SEARCHTERM")
     assert search.chat("why?", rag, "b.md", "few-shot") == "ok"
     system = sent[0][0]["content"]
     assert "SEARCHTERM" in system and "a.pdf: 0.90, b.md: 0.12" in system
-    assert "AAA" in system and "BBB" in system
+    assert "BBB" in system and "AAA" not in system  # chunks of the chosen file only
     assert sent[0][-1]["content"] == "why?"
     assert "choose" in search.chat("why?", rag, "zzz")
+
+
+@pytest.mark.parametrize("template", ["rag-default", "few-shot", "chain-of-thought"])
+def test_every_chat_template_renders_with_chosen_file_only(monkeypatch, template):
+    from backend.models import RAGResult
+    from backend.search import search
+
+    sent = []
+    monkeypatch.setattr(search, "complete", lambda messages, label="": sent.append(messages) or "ok")
+    rag = RAGResult({"a.pdf": "AAA", "b.md": "BBB"}, {"a.pdf": 0.9, "b.md": 0.12}, "SEARCHTERM")
+    assert search.chat("why?", rag, "b.md", template) == "ok"
+    text = "\n".join(m["content"] for m in sent[0])
+    assert "BBB" in text and "AAA" not in text

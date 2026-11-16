@@ -43,4 +43,4 @@ PromptRAG/
    every file and stores the best chunks per file in a `RAGOutput` dict (file name -> text). The
    HF LLM then scores each file's text 0.00-1.00 with the zero-shot `zero-shot-eval` template.
 3. **Chat:** the user picks a `chosen_file` and optionally a pattern (few-shot, chain-of-thought)
-   and converses with the LLM via `backend.search.chat()` over the RAG output of all files, focused on the chosen file.
+   and converses with the LLM via `backend.search.chat()` over the RAG chunks of the chosen file only (plus the eval scores of all files).
