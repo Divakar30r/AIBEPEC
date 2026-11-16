@@ -1,0 +1,44 @@
+"""Shared LangGraph state."""
+
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
+
+
+class AgentState(TypedDict, total=False):
+    # Conversation: history followed by the latest user message. `add_messages` appends.
+    messages: Annotated[list[BaseMessage], add_messages]
+
+    # Node A
+    intent: str  # one of INTENTS
+    table_name: str  # the table to change
+    related_tables: list[str]  # other existing tables the request needs read
+    json_sample: str  # latest JSON the user pasted, '' if none
+    # Create: the latest JSON in the whole chat. Modify: JSON in the latest message only, read as
+    # a PARTIAL sample (just the fields to change).
+    json_valid: bool  # True when json_sample is a non-empty object
+
+    # Create branch
+    ddl_script: str  # B1
+    key_suggestions: str  # B2
+    type_suggestions: str  # B3
+
+    # Modify branch
+    table_found: bool  # C1: every named table exists
+    missing_tables: list[str]  # C1
+    dependencies: str  # C1
+    column_types: dict[str, str]  # C1: lower-cased column name -> current type
+    modification_plan: str  # C2
+
+    # Output
+    script: str  # the executable SQL (create DDL or ALTER/recreate script), '' if none
+    reply: str  # the text shown to the user
+
+
+def split_messages(state: AgentState) -> tuple[list[BaseMessage], str]:
+    """(history, latest user text): the last message is the question, the rest is history."""
+    messages = state["messages"]
+    last = messages[-1]
+    text = last.content if isinstance(last.content, str) else str(last.content)
+    return list(messages[:-1]), text
