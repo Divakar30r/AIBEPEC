@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from .BackendConstants import MESSAGES
 from .config import settings
 from .db import connect_target
-from .state import AgentState
 
 _FIND_TABLE = """
 SELECT c.oid, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -73,14 +72,18 @@ class TableInfo:
         )
 
 
-def fetch_table_info(table_name: str, schema: str | None = None) -> TableInfo | None:
-    """Look the table up (case-insensitively) in the target DB; None when it does not exist."""
+def lookup_table(table_name: str, schema: str | None = None) -> tuple[int, str] | None:
+    """(oid, real name) of the table (matched case-insensitively), None when it does not exist."""
     schema = schema or settings.target_schema
     with connect_target() as conn:
         found = conn.execute(_FIND_TABLE, (schema, table_name)).fetchone()
-        if found is None:
-            return None
-        oid, name = found
+    return (found[0], found[1]) if found else None
+
+
+def read_table_info(oid: int, name: str, schema: str | None = None) -> TableInfo:
+    """Columns, constraints, referencing foreign keys and indexes of a table found by lookup."""
+    schema = schema or settings.target_schema
+    with connect_target() as conn:
         info = TableInfo(schema=schema, name=name)
 
         for col, col_type, not_null, default in conn.execute(_COLUMNS, (oid,)):
@@ -104,26 +107,15 @@ def fetch_table_info(table_name: str, schema: str | None = None) -> TableInfo | 
     return info
 
 
-def load_dependencies(state: AgentState) -> dict:
-    """Graph node C1: read the table to change and every other table the request mentions."""
-    primary = state.get("table_name", "")
-    names = [primary, *(t for t in state.get("related_tables", []) if t.lower() != primary.lower())]
-    infos: list[TableInfo] = []
-    missing: list[str] = []
-    for name in names:
-        info = fetch_table_info(name)
-        if info is None:
-            missing.append(name)
-        else:
-            infos.append(info)
-    target = infos[0] if infos and primary and infos[0].name.lower() == primary.lower() else None
-    return {
-        "table_found": not missing,
-        "missing_tables": missing,
-        "table_name": target.name if target else primary,
-        "dependencies": "\n\n".join(i.render() for i in infos),
-        "column_types": target.column_types if target else {},
-    }
+def fetch_table_info(table_name: str, schema: str | None = None) -> TableInfo | None:
+    """Both steps in one call (C1A then C1B); None when the table does not exist."""
+    found = lookup_table(table_name, schema)
+    return read_table_info(*found, schema) if found else None
+
+
+def table_names(primary: str, related: list[str]) -> list[str]:
+    """The table to change first, then the related tables other than that one."""
+    return [primary, *(t for t in related if t.lower() != primary.lower())]
 
 
 def table_not_found_message(tables: list[str]) -> str:

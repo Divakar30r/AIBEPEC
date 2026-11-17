@@ -9,7 +9,7 @@ import json
 
 from .config import settings
 from .llm import ask
-from .textutil import parse_json_object
+from .Util import parse_json_object
 
 UNKNOWN_TYPE = "unknown"
 

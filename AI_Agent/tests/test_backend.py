@@ -14,7 +14,7 @@ from backend import SampleTypes, TableDependencies, agent, graph, llm
 from backend.executor import prepare_statements
 from backend.prompt import get_prompt
 from backend.SampleTypes import describe_changes, detect_types
-from backend.textutil import extract_sql, find_json_sample, is_valid_sample, parse_json_object
+from backend.Util import extract_sql, find_json_sample, is_valid_sample, parse_json_object
 
 
 class FakeLLM(BaseChatModel):
@@ -193,12 +193,20 @@ def test_json_given_in_a_later_turn_is_used():
     assert agent.run_agent(history, "rename it to orders2").script.startswith("CREATE TABLE")
 
 
-def test_modify_runs_c1_c2(monkeypatch):
+def patch_tables(monkeypatch, infos: dict):
+    """Fake the DB for C1A (lookup_table) and C1B (read_table_info): name -> TableInfo."""
     monkeypatch.setattr(
         TableDependencies,
-        "fetch_table_info",
-        lambda name, schema=None: TableDependencies.TableInfo("public", "orders"),
+        "lookup_table",
+        lambda name, schema=None: (name, name) if name in infos else None,
     )
+    monkeypatch.setattr(
+        TableDependencies, "read_table_info", lambda oid, name, schema=None: infos[oid]
+    )
+
+
+def test_modify_runs_c1_c2(monkeypatch):
+    patch_tables(monkeypatch, {"orders": TableDependencies.TableInfo("public", "orders")})
     llm.set_llm(make_llm('{"intent": "modify", "table_name": "orders"}'))
     out = agent.run_agent([], "add column x to orders")
     assert out.intent == "modify" and out.script == "ALTER TABLE orders ADD COLUMN x int;"
@@ -206,10 +214,9 @@ def test_modify_runs_c1_c2(monkeypatch):
 
 def test_modify_json_is_read_from_latest_message_only(monkeypatch):
     seen = {}
-    monkeypatch.setattr(
-        TableDependencies,
-        "fetch_table_info",
-        lambda name, schema=None: TableDependencies.TableInfo("public", "orders", column_types={"x": "text"}),
+    patch_tables(
+        monkeypatch,
+        {"orders": TableDependencies.TableInfo("public", "orders", column_types={"x": "text"})},
     )
     real_ask = llm.ask
 
@@ -237,7 +244,7 @@ def test_modify_loads_related_tables_and_stops_if_one_is_missing(monkeypatch):
     seen = {}
     infos = {"orders": TableDependencies.TableInfo("public", "orders", column_types={"x": "text"}),
              "PolMaster": TableDependencies.TableInfo("public", "PolMaster")}
-    monkeypatch.setattr(TableDependencies, "fetch_table_info", lambda n, schema=None: infos.get(n))
+    patch_tables(monkeypatch, infos)
     from backend import Modifications
     real_ask = llm.ask
     monkeypatch.setattr(Modifications, "ask", lambda name, **kw: (seen.update(kw), real_ask(name, **kw))[1])
@@ -259,7 +266,7 @@ def test_quote_ident():
 
 
 def test_modify_unknown_table_stops_after_c1(monkeypatch):
-    monkeypatch.setattr(TableDependencies, "fetch_table_info", lambda name, schema=None: None)
+    patch_tables(monkeypatch, {})
     llm.set_llm(make_llm('{"intent": "modify", "table_name": "ghost"}'))
     out = agent.run_agent([], "add column x to ghost")
     assert out.script == "" and "ghost" in out.text
@@ -272,3 +279,39 @@ def test_other_intent_gets_the_help_text():
 
 def test_graph_has_every_node():
     assert "plan_modification" in graph.graph_mermaid()
+    assert "fetch_table" in graph.graph_mermaid()
+
+
+def test_modify_fetches_each_table_in_its_own_subgraph_run_in_request_order(monkeypatch):
+    import threading
+    import time
+
+    infos = {
+        "orders": TableDependencies.TableInfo("public", "orders", column_types={"x": "text"}),
+        "a": TableDependencies.TableInfo("public", "a"),
+        "b": TableDependencies.TableInfo("public", "b"),
+    }
+    patch_tables(monkeypatch, infos)
+    threads: set[int] = set()
+    real_lookup = TableDependencies.lookup_table
+
+    def slow_lookup(name, schema=None):  # the first table is the slowest to finish
+        threads.add(threading.get_ident())
+        time.sleep(0.3 if name == "orders" else 0.05)
+        return real_lookup(name, schema)
+
+    monkeypatch.setattr(TableDependencies, "lookup_table", slow_lookup)
+    seen = {}
+    from backend import Modifications
+
+    real_ask = llm.ask
+    monkeypatch.setattr(Modifications, "ask", lambda name, **kw: (seen.update(kw), real_ask(name, **kw))[1])
+    llm.set_llm(make_llm('{"intent": "modify", "table_name": "orders", "related_tables": ["a", "b"]}'))
+    events = []
+    out = agent.run_agent([], "make orders like a and b", lambda n, s: events.append((n, s)))
+
+    assert out.script.startswith("ALTER")
+    deps = seen["dependencies"]
+    assert deps.index("public.orders") < deps.index("public.a") < deps.index("public.b")
+    assert len(threads) == 3  # one thread per table: they ran concurrently
+    assert ("find_table", "running") in events and ("read_table", "done") in events

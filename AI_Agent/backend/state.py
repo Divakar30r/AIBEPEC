@@ -1,5 +1,6 @@
 """Shared LangGraph state."""
 
+import operator
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -25,6 +26,10 @@ class AgentState(TypedDict, total=False):
     type_suggestions: str  # B3
 
     # Modify branch
+    # C1A/C1B subgraph runs (one per table, in parallel via Send) append here; `operator.add`
+    # merges their results. Each item is a dict:
+    # {"index": int, "name": str, "info": TableInfo | None}  (None = table not found).
+    table_results: Annotated[list[dict], operator.add]
     table_found: bool  # C1: every named table exists
     missing_tables: list[str]  # C1
     dependencies: str  # C1
@@ -42,3 +47,18 @@ def split_messages(state: AgentState) -> tuple[list[BaseMessage], str]:
     last = messages[-1]
     text = last.content if isinstance(last.content, str) else str(last.content)
     return list(messages[:-1]), text
+
+
+# --- C1A / C1B subgraph: runs once per table, in parallel, started by Send -------------------
+class TableFetchState(TypedDict, total=False):
+    """State of ONE subgraph run (separate from AgentState). Input is ``index`` + ``table_name``."""
+
+    index: int  # position of the table in the request, so the join can restore the order
+    table_name: str  # the name as the user wrote it
+    oid: int  # C1A -> C1B
+    real_name: str  # C1A -> C1B: the table's real (case-correct) name
+    table_results: Annotated[list[dict], operator.add]  # the only key handed back to AgentState
+
+
+class TableFetchOutput(TypedDict):
+    table_results: list[dict]

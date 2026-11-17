@@ -4,7 +4,7 @@ from .config import settings
 from .llm import ask
 from .SampleTypes import describe_changes
 from .state import AgentState, split_messages
-from .textutil import extract_sql
+from .Util import extract_sql
 
 
 def plan_modification(state: AgentState) -> dict:

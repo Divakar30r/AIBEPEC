@@ -43,6 +43,9 @@ FLOW = [
     ("node", "suggest_keys", 26),
     ("node", "suggest_types", 26),
     ("lbl", "↳ modify, table named", 10),
+    ("lbl", "↳ once per table, in parallel", 26),
+    ("node", "find_table", 26),
+    ("node", "read_table", 26),
     ("node", "load_dependencies", 10),
     ("node", "plan_modification", 10),
     ("lbl", "↳ every path ends", 0),
@@ -120,7 +123,7 @@ chat_outer, script_outer = st.columns([3, 2], gap="large")
 chat_col = chat_outer.container(height=PANE_HEIGHT, border=True)  # scrolls on its own
 script_col = script_outer.container(height=PANE_HEIGHT, border=True)  # scrolls on its own
 
-with script_col:
+with script_col: # RIGHT PANE: script editor and execute button
     st.subheader("Final script")
     st.caption(
         "Filled with the latest generated script. Edit it or paste your own, then execute. "
@@ -145,7 +148,7 @@ with script_col:
         else:
             st.error(detail)
 
-with chat_col:
+with chat_col: #MIDDLE PANE: chat history and input box
     for m in st.session_state.messages:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
@@ -158,7 +161,11 @@ with chat_col:
             height=1,
         )
 
-if question := st.chat_input("e.g. create a table for this order JSON: {...}"):
+def handle_question(question: str) -> None:
+    """Run the agent for one submitted question and store the outcome in the session.
+    The chat and the script pane are redrawn by the ``st.rerun()`` that follows this call.
+    """
+    # History is taken before the new question is added: the agent gets it as a separate input.
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
     add_message("user", question)
 
@@ -173,7 +180,7 @@ if question := st.chat_input("e.g. create a table for this order JSON: {...}"):
             st.markdown(question)
         try:
             with st.spinner("Thinking..."):
-                reply = run_agent(history, question, on_node)
+                reply = run_agent(history, question, on_node) # Graph being initiated
             add_message("assistant", reply.text)
             if reply.script:
                 st.session_state.pending_script = reply.script
@@ -182,4 +189,14 @@ if question := st.chat_input("e.g. create a table for this order JSON: {...}"):
                 if state == "running":
                     st.session_state.node_status[name] = "error"
             add_message("assistant", f"Sorry, the agent failed: `{exc}`")
+
+
+CHAT_PLACEHOLDER = "e.g. create a table for this order JSON: {...}"  # hint in the empty input box
+
+# Wait for the question: chat_input returns the text only on the run triggered by a submit,
+# otherwise None, so nothing below runs until the user submits.
+question = st.chat_input(placeholder=CHAT_PLACEHOLDER, key="chat_input")
+ 
+if question: # Whenever user submits question, handle it and rerun the app to show the new state and next rounds
+    handle_question(question)
     st.rerun()

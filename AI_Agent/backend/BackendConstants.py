@@ -13,7 +13,10 @@ NODES: dict[str, str] = {
     "create_ddl": "create_ddl",  # B1
     "suggest_keys": "suggest_keys",  # B2
     "suggest_types": "suggest_types",  # B3
-    "load_dependencies": "load_dependencies",  # C1
+    "fetch_table": "fetch_table",  # subgraph run once per table via Send; holds C1A and C1B
+    "find_table": "find_table",  # C1A (inside the subgraph)
+    "read_table": "read_table",  # C1B (inside the subgraph)
+    "load_dependencies": "load_dependencies",  # C1 (joins the per-table results)
     "plan_modification": "plan_modification",  # C2
     "respond": "respond",
 }
@@ -24,6 +27,9 @@ NODE_LABELS: dict[str, str] = {
     "create_ddl": "B1 · Create DDL",
     "suggest_keys": "B2 · Suggest keys",
     "suggest_types": "B3 · Alternate types",
+    "fetch_table": "C1 · Fetch table (per table)",
+    "find_table": "C1A · Find table",
+    "read_table": "C1B · Read table details",
     "load_dependencies": "C1 · Load dependencies",
     "plan_modification": "C2 · ALTER or recreate",
     "respond": "Respond",

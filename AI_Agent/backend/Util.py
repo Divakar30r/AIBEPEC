@@ -1,14 +1,23 @@
-"""Small helpers for pulling JSON and SQL out of chat text."""
+"""Miscellaneous helpers: chat messages, and pulling JSON and SQL out of chat text."""
 
 import json
 import re
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from .BackendConstants import SQL_FENCE_LANGS
+from .config import settings
 
 _FENCE = re.compile(r"```[ \t]*([A-Za-z]*)[ \t]*\n(.*?)```", re.DOTALL)
 _decoder = json.JSONDecoder()
+
+
+def to_messages(history: list[dict[str, str]]) -> list[BaseMessage]:
+    """The last ``settings.history_messages`` chat dicts (``role``, ``content``) as messages."""
+    recent = history[-settings.history_messages :] if settings.history_messages > 0 else []
+    return [
+        (HumanMessage if m["role"] == "user" else AIMessage)(content=m["content"]) for m in recent
+    ]
 
 
 def _first_json(text: str, kinds: tuple[type, ...]):
