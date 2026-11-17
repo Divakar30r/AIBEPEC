@@ -3,15 +3,17 @@
 Not run automatically; use the /runtests skill.
 """
 
+import json
+
 import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from backend import TableDependencies, agent, graph, llm
+from backend import SampleTypes, TableDependencies, agent, graph, llm
 from backend.executor import prepare_statements
 from backend.prompt import get_prompt
-from backend.SampleTypes import describe_changes, infer_type
+from backend.SampleTypes import describe_changes, detect_types
 from backend.textutil import extract_sql, find_json_sample, is_valid_sample, parse_json_object
 
 
@@ -19,6 +21,7 @@ class FakeLLM(BaseChatModel):
     """Answers by looking at the system prompt, so parallel nodes cannot get each other's reply."""
 
     intent: str = ""
+    calls: list[str] = []  # the system prompt of every call, to count calls per template
 
     @property
     def _llm_type(self) -> str:
@@ -26,8 +29,11 @@ class FakeLLM(BaseChatModel):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         system = messages[0].content
+        self.calls.append(system)
         if "route requests" in system:
             text = self.intent
+        elif "column data type for it" in system:  # type-detection: every field -> "text"
+            text = json.dumps({field: "text" for field in json.loads(messages[-1].content)})
         elif "Write the DDL" in system:
             text = "```sql\nCREATE TABLE orders (id int, note text);\n```"
         elif "primary key" in system:
@@ -52,8 +58,9 @@ def reset_llm():
 
 # --- prompts -------------------------------------------------------------------------------
 def test_get_prompt_fills_variables():
-    msgs = get_prompt("key-suggestions", ddl_script="CREATE TABLE t (id int);")
+    msgs = get_prompt("key-suggestions", dialect="MySQL", ddl_script="CREATE TABLE t (id int);")
     assert msgs[-1].content == "CREATE TABLE t (id int);"
+    assert "MySQL expert" in msgs[0].content
 
 
 def test_get_prompt_history_is_inserted_before_question():
@@ -71,7 +78,7 @@ def test_get_prompt_missing_and_unknown_variables():
     with pytest.raises(ValueError, match="missing"):
         get_prompt("key-suggestions")
     with pytest.raises(ValueError, match="unknown"):
-        get_prompt("key-suggestions", ddl_script="x", extra="y")
+        get_prompt("key-suggestions", dialect="PostgreSQL", ddl_script="x", extra="y")
 
 
 # --- text helpers --------------------------------------------------------------------------
@@ -111,25 +118,34 @@ def test_is_valid_sample(sample, ok):
 
 
 # --- type detection -------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("12", "integer"), ("12345678901", "bigint"), ("007", "text"), ("12.50", "numeric"),
-        ("TRUE", "boolean"), ("2025-01-31", "date"), ("2025-13-45", "text"),
-        ("2025-01-31T10:00:00Z", "timestamptz"), ("2025-01-31 10:00:00", "timestamp"),
-        ("10:30", "time"), ("123e4567-e89b-12d3-a456-426614174000", "uuid"), ("hello", "text"),
-        (3, "integer"), (3.5, "numeric"), (True, "boolean"), ({"a": "1"}, "jsonb"),
-        (["1", "2"], "integer[]"), ([], "jsonb[]"), (None, "unknown (null sample)"),
-    ],
-)
-def test_infer_type(value, expected):
-    assert infer_type(value) == expected
+def test_detect_types_is_one_llm_call_for_all_fields():
+    fake = make_llm("")
+    fake.calls = []
+    llm.set_llm(fake)
+    assert detect_types('{"a": "1", "b": "2", "c": "3"}') == {"a": "text", "b": "text", "c": "text"}
+    assert len(fake.calls) == 1
+
+
+def test_detect_types_forgives_key_case_and_marks_missing_fields_unknown(monkeypatch):
+    monkeypatch.setattr(SampleTypes, "ask", lambda name, **kw: 'Sure: {"ID": "integer", "n": ""}')
+    assert detect_types('{"id": "1", "n": null, "x": "y"}') == {
+        "id": "integer", "n": "unknown", "x": "unknown",
+    }
+
+
+def test_detect_types_passes_the_configured_dialect(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(SampleTypes, "ask", lambda name, **kw: (seen.update(kw), "{}")[1])
+    monkeypatch.setattr(SampleTypes.settings, "db_dialect", "MySQL")
+    detect_types('{"a": "1"}')
+    assert seen["dialect"] == "MySQL"
 
 
 def test_describe_changes_marks_new_and_existing_columns():
+    llm.set_llm(make_llm(""))
     out = describe_changes('{"status": "Open", "extra": "5"}', {"status": "character varying(20)"})
-    assert "status: existing column of type character varying(20)" in out
-    assert "extra: NEW column, detected type integer" in out
+    assert "status: existing column of type character varying(20); sample suggests text" in out
+    assert "extra: NEW column, detected type text" in out
 
 
 # --- executor guard ------------------------------------------------------------------------

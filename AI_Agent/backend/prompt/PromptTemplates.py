@@ -8,10 +8,13 @@ chat messages, ``[]`` when there is none) followed by the latest user message ``
 
 Variables per template:
   intent            history, question
-  create-ddl        history, question, schema_name, table_name, json_sample, type_hints
-  key-suggestions   ddl_script
-  alternate-types   ddl_script, json_sample
-  modification-plan history, question, schema_name, table_name, dependencies, field_changes
+  type-detection    dialect, json_sample
+  create-ddl        dialect, history, question, schema_name, table_name, json_sample, type_hints
+  key-suggestions   dialect, ddl_script
+  alternate-types   dialect, ddl_script, json_sample
+  modification-plan dialect, history, question, schema_name, table_name, dependencies,
+                    field_changes
+``dialect`` is the target database (settings.db_dialect), e.g. PostgreSQL or MySQL.
 """
 
 from langchain_core.messages import BaseMessage
@@ -23,7 +26,7 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         [
             (
                 "system",
-                "You route requests for a PostgreSQL DDL assistant. Read the conversation and "
+                "You route requests for a database DDL assistant. Read the conversation and "
                 "the latest message, then decide the user's intent:\n"
                 "- create: the user wants a NEW table (usually giving a JSON sample).\n"
                 "- modify: the user wants to change an EXISTING table (add, drop, rename or "
@@ -41,24 +44,41 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
             ("human", "{question}"),
         ]
     ),
+    # Column types of all fields of a JSON sample, in one call (used by B1 and C2).
+    "type-detection": ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a {dialect} expert. The user sends a JSON object of field name -> "
+                "sample value. For EVERY field choose the best {dialect} column data type for "
+                "it. Judge the value, not only its JSON type: a string holding a number, "
+                "boolean, date, time, timestamp (with or without time zone) or UUID gets that "
+                "type; an object gets the dialect's JSON type; an array gets the dialect's "
+                "array type, or its JSON type if it has none; a null carries no information, "
+                "so answer 'unknown'. Reply with ONLY a JSON object that maps each field name, "
+                'exactly as given, to its type, e.g. {{"field_a": "<type>", "field_b": "<type>"}}',
+            ),
+            ("human", "{json_sample}"),
+        ]
+    ),
     # Node B1: CREATE TABLE from a JSON sample.
     "create-ddl": ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "You are a PostgreSQL expert. Write the DDL to create a table in schema "
+                "You are a {dialect} expert. Write the DDL to create a table in schema "
                 "{schema_name} from the JSON sample below.\n"
                 "Table name requested by the user: '{table_name}' (derive a sensible one from the "
                 "sample when empty).\n"
                 "Rules:\n"
                 "- The sample is an object of field name -> sample value. Every key is a column "
                 "name; quote an identifier only when it needs it.\n"
-                "- Column types were already detected from the sample values (strings holding "
-                "numbers, booleans, dates or uuids count as those types). Use them unless the "
-                "user asks otherwise:\n{type_hints}\n"
-                "- A null sample means the type is unknown: use text unless the conversation says "
-                "otherwise. An object value is a json/jsonb column: use jsonb unless the user "
-                "asks for json. Never create child tables for it.\n"
+                "- Column types were already detected from the sample values. Use them unless "
+                "the user asks otherwise:\n{type_hints}\n"
+                "- An 'unknown' type (null sample) means use a general text type unless the "
+                "conversation says otherwise. An object value is a JSON column: use the "
+                "dialect's best JSON type unless the user asks for another. Never create child "
+                "tables for it.\n"
                 "- Add NOT NULL only when the sample or the user implies it.\n"
                 "- Add primary keys, foreign keys or indexes only if the user asked for them; "
                 "they are suggested separately.\n"
@@ -75,7 +95,7 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         [
             (
                 "system",
-                "You are a PostgreSQL expert. For the CREATE TABLE script the user sends, "
+                "You are a {dialect} expert. For the CREATE TABLE script the user sends, "
                 "suggest a primary key (single or composite; natural or surrogate, with a "
                 "one-line reason) and any indexes worth having for typical lookups and joins. "
                 "Keep the reasoning to short bullets, then give ONE ```sql code block with the "
@@ -89,10 +109,10 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         [
             (
                 "system",
-                "You are a PostgreSQL expert. Compare the CREATE TABLE script with the JSON "
+                "You are a {dialect} expert. Compare the CREATE TABLE script with the JSON "
                 "sample it came from and point out columns whose data type could reasonably be "
-                "another PostgreSQL type (for example text -> uuid, timestamptz, numeric(p,s), "
-                "an enum, or integer -> bigint). List only changes worth making, as a markdown "
+                "another {dialect} type (for example text -> uuid, a timestamp type, a decimal "
+                "with precision, an enum, or integer -> bigint). List only changes worth making, as a markdown "
                 "table with the columns: column | current | suggested | why. If none, reply "
                 "'No changes suggested.'\n\nJSON sample:\n{json_sample}",
             ),
@@ -104,7 +124,7 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         [
             (
                 "system",
-                "You are a PostgreSQL expert. The user wants to modify the existing table "
+                "You are a {dialect} expert. The user wants to modify the existing table "
                 "{schema_name}.{table_name}. Unless the request says otherwise, change only that "
                 "table; any other table below is there for reference.\n"
                 "The application has ALREADY READ the schemas below live from the database: "

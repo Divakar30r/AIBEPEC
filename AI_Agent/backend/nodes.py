@@ -39,6 +39,7 @@ def create_ddl(state: AgentState) -> dict:
     history, question = split_messages(state)
     reply = ask(
         "create-ddl",
+        dialect=settings.db_dialect,
         history=history,
         question=question,
         schema_name=settings.target_schema,

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     hf_max_new_tokens: int = 2000
     hf_temperature: float = 0.1
 
+    # Target database flavour named in the prompts (types, JSON type, syntax), e.g. PostgreSQL
+    # or MySQL. Execution and table lookup are still PostgreSQL-only (see executor/db).
+    db_dialect: str = "PostgreSQL"
+
     # Postgres (local)
     pg_host: str = "localhost"
     pg_port: int = 5432

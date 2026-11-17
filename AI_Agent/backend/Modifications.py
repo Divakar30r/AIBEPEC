@@ -15,6 +15,7 @@ def plan_modification(state: AgentState) -> dict:
         field_changes = "(no JSON given: follow the request text)"
     plan = ask(
         "modification-plan",
+        dialect=settings.db_dialect,
         history=history,
         question=question,
         schema_name=settings.target_schema,

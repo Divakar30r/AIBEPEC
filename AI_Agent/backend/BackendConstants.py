@@ -47,7 +47,7 @@ MESSAGES: dict[str, str] = {
         "I could not find {tables} in schema `{schema}` of `{db}`, so I cannot plan the change."
     ),
     "other": (
-        "I generate PostgreSQL DDL. Ask me to **create** a table (include a JSON sample) "
+        "I generate database DDL. Ask me to **create** a table (include a JSON sample) "
         "or to **modify** an existing table."
     ),
     "ddl_intro": "Here is the DDL script:",
@@ -63,9 +63,6 @@ IGNORED_SCRIPT_KEYWORDS: list[str] = ["BEGIN", "COMMIT", "END", "START"]
 
 # Never executed, even though DROP is allowed.
 FORBIDDEN_SCRIPT_PREFIXES: list[str] = ["DROP DATABASE", "DROP SCHEMA"]
-
-# Strings (case-insensitive) a JSON sample may use to hold a boolean.
-BOOL_STRINGS: list[str] = ["true", "false"]
 
 # Language tags accepted on a fenced code block holding SQL.
 SQL_FENCE_LANGS: list[str] = ["sql", "pgsql", "postgresql", "plpgsql"]
