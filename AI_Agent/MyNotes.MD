@@ -78,25 +78,27 @@ AI_Agent/
 │  ├─ RULES/  backend-constants.MD · PromptFileRule.MD
 │  └─ skills/runtests/SKILL.md    /runtests runs pytest on demand only
 │
-├─ backend/                       (1,157 lines)
+├─ backend/                       (1,300 lines)
 │  ├─ config.py            41   Settings (.env): HF, db_dialect, PG, history   L10
-│  ├─ BackendConstants.py  74   INTENTS L4 · NODES L11 · NODE_LABELS L25 · MESSAGES L39
-│  │                            · script keyword lists L65-74
-│  ├─ state.py             64   AgentState L10 · split_messages L44
-│  │                            · TableFetchState L53 · TableFetchOutput L63
+│  ├─ BackendConstants.py  89   INTENTS L4 · NODES L11 · NODE_LABELS L26 · MESSAGES L41
+│  │                            · B4 answer lists L73-77 · script keyword lists L80-89
+│  ├─ state.py             65   AgentState L10 · split_messages L45
+│  │                            · TableFetchState L54 · TableFetchOutput L64
 │  ├─ llm.py               39   get_llm L12 · set_llm L30 · ask L36
 │  ├─ prompt/
-│  │  └─ PromptTemplates.py 178 TEMPLATES L23: intent L25 · type-detection L48
-│  │                            · create-ddl L65 · key-suggestions L94
-│  │                            · alternate-types L108 · modification-plan L123
-│  │                            · get_prompt L159
-│  ├─ Util.py              76   to_messages L15 · parse_json_object L36
-│  │                            · find_json_sample L42 · is_valid_sample L56 · extract_sql L69
+│  │  └─ PromptTemplates.py 193 TEMPLATES L23: intent L26 · type-detection L49
+│  │                            · create-ddl L66 · key-suggestions L95
+│  │                            · alternate-types L109 · revise-ddl L124
+│  │                            · modification-plan L138 · get_prompt L174
+│  ├─ Util.py              84   to_messages L15 · classify_answer L23 · parse_json_object L44
+│  │                            · find_json_sample L50 · is_valid_sample L64 · extract_sql L77
 │  ├─ SampleTypes.py       63   detect_types L17 · describe_sample L38 · describe_changes L47
 │  │
 │  │  ── main graph nodes ──
-│  ├─ nodes.py            131   A check_intent L16 · B1 create_ddl L39 · C1 load_dependencies L55
-│  │                            · fan_out_tables L71 (Send) · routers L80/L94 · respond L98
+│  ├─ nodes.py            181   A check_intent L25 · B1 create_ddl L48 (revise mode)
+│  │                            · B4 ask_revision L72 (interrupt + Command) · C1 load_dependencies L89
+│  │                            · fan_out_tables L105 (Send) · routers L114/L128/L135/L141
+│  │                            · respond L145
 │  ├─ KeySuggestions.py    13   B2 suggest_keys L8
 │  ├─ Alternatetypes.py    16   B3 suggest_types L8
 │  ├─ Modifications.py     26   C2 plan_modification L10
@@ -108,15 +110,17 @@ AI_Agent/
 │  │                            · table_not_found_message L121 · quote_ident L43
 │  │                            · TableInfo L49 · SQL L10-37
 │  │
-│  ├─ graph.py             82   build_table_fetch_graph L31 · build_graph L42
-│  │                            · graph_mermaid L80
+│  ├─ graph.py            100   build_table_fetch_graph L41 · build_graph L52
+│  │                            (compiled with InMemorySaver) · graph_mermaid L98
 │  │
 │  │  ── runtime ──
-│  ├─ agent.py             65   run_agent L23 (streams node events)
-│  │                            · run_table_fetch L55 (subgraph on its own, invoke)
+│  ├─ agent.py            101   _stream L27 (streams node events, detects the B4 pause)
+│  │                            · run_agent L62 · resume_agent L80 (Command resume)
+│  │                            · run_table_fetch L91 (subgraph on its own, invoke)
 │  ├─ db.py                53   connect L9 · connect_target L19 · log_script L28
 │  └─ executor.py          83   prepare_statements L26 · summarize_script L53
 │                               · execute_script L65
-├─ frontend/app.py        202   FLOW L38 · render_flow L66 · run_script L101
-│                               · PANE_HEIGHT L120 · handle_question L164 (chat input below it)
-└─ tests/test_backend.py  317   35 tests collected; FakeLLM near the top
+├─ frontend/app.py        258   FLOW L41 · render_flow L70 · run_script L106 · PANE_HEIGHT L125
+│                               · on_node L170 · run_turn L192 · resume_turn L210
+│                               · handle_question L231 (chat input below it)
+└─ tests/test_backend.py  393   50 tests collected; FakeLLM near the top

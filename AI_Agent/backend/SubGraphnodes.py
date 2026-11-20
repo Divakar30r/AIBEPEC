@@ -1,6 +1,6 @@
 """Nodes of the C1A -> C1B subgraph (one run per table): find the table, then read its details."""
 
-from langgraph.graph import END
+from langgraph.graph import END as LG_END
 
 # Called through the module (not ``from ... import``) so a patched TableDependencies.lookup_table
 # or read_table_info, as the tests do, is the one used here.
@@ -18,7 +18,7 @@ def find_table(state: TableFetchState) -> dict:
 
 
 def route_after_find(state: TableFetchState) -> str:
-    return NODES["read_table"] if "oid" in state else END
+    return NODES["read_table"] if "oid" in state else LG_END
 
 
 def read_table(state: TableFetchState) -> dict:

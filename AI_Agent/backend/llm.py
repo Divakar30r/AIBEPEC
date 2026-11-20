@@ -1,15 +1,15 @@
 """Chat model client: a Hugging Face model reached through an OpenAI-compatible endpoint."""
 
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel as LC_BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from .config import settings
 from .prompt import get_prompt
 
-_llm: BaseChatModel | None = None
+_llm: LC_BaseChatModel | None = None
 
 
-def get_llm() -> BaseChatModel:
+def get_llm() -> LC_BaseChatModel:
     global _llm
     if _llm is None:
         if not settings.huggingfacehub_api_token:
@@ -27,7 +27,7 @@ def get_llm() -> BaseChatModel:
     return _llm
 
 
-def set_llm(llm: BaseChatModel | None) -> None:
+def set_llm(llm: LC_BaseChatModel | None) -> None:
     """Swap the model (tests use a fake one); ``None`` resets to the configured model."""
     global _llm
     _llm = llm

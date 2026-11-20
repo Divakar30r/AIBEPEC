@@ -1,16 +1,24 @@
-"""Graph nodes A (intent), B1 (create DDL), C1 (load dependencies) and the final respond node,
-plus the routers."""
+"""Graph nodes A (intent), B1 (create DDL), B4 (ask to revise), C1 (load dependencies) and the
+final respond node, plus the routers."""
 
-from langchain_core.messages import AIMessage
-from langgraph.types import Send
+from typing import Literal
 
-from .BackendConstants import INTENTS, MESSAGES, NODES
+from langchain_core.messages import AIMessage as LC_AIMessage
+from langgraph.graph import END as LG_END
+from langgraph.types import Command as LG_Command, Send as LG_Send, interrupt as LG_interrupt
+
+from .BackendConstants import INTENTS, MESSAGES, NO_CHANGES_MARKER, NODES
 from .config import settings
 from .llm import ask
 from .SampleTypes import describe_sample
 from .state import AgentState, split_messages
 from .TableDependencies import TableInfo, table_names, table_not_found_message
-from .Util import extract_sql, find_json_sample, is_valid_sample, parse_json_object
+from .Util import (
+    extract_sql,
+    find_json_sample,
+    is_valid_sample,
+    parse_json_object,
+)
 
 
 def check_intent(state: AgentState) -> dict:
@@ -18,7 +26,8 @@ def check_intent(state: AgentState) -> dict:
     history, question = split_messages(state)
     parsed = parse_json_object(ask("intent", history=history, question=question)) or {}
     intent = str(parsed.get("intent", "")).lower()
-    intent = intent if intent in INTENTS.values() else INTENTS["other"]
+    allowed = [INTENTS["create"], INTENTS["modify"], INTENTS["other"]]  # "drop" is only for B4
+    intent = intent if intent in allowed else INTENTS["other"]
     # Create may reuse a sample pasted earlier in the chat. For modify the JSON is a partial
     # sample naming the fields to change, so only the latest message counts (an older create
     # sample would wrongly mark every field as changed).
@@ -37,7 +46,15 @@ def check_intent(state: AgentState) -> dict:
 
 
 def create_ddl(state: AgentState) -> dict:
-    """Node B1: CREATE TABLE script from the JSON sample."""
+    """Node B1: CREATE TABLE script from the JSON sample, or (after B4) with B3's types applied."""
+    if state.get("revise_ddl"):
+        reply = ask(
+            "revise-ddl",
+            dialect=settings.db_dialect,
+            ddl_script=state["ddl_script"],
+            type_suggestions=state.get("type_suggestions", ""),
+        )
+        return {"ddl_script": extract_sql(reply)}
     history, question = split_messages(state)
     reply = ask(
         "create-ddl",
@@ -50,6 +67,31 @@ def create_ddl(state: AgentState) -> dict:
         type_hints=describe_sample(state["json_sample"]),
     )
     return {"ddl_script": extract_sql(reply)}
+
+
+def ask_revision(state: AgentState) -> LG_Command[Literal["create_ddl", "respond"]]:
+    """Node B4: after B2 and B3, ask the human whether B1 should be redone with B3's types.
+
+    ``interrupt`` pauses the graph (it needs the checkpointer) and hands the question to the
+    caller, who resumes with ``Command(resume=<reply>)``. On resume this node runs again from the
+    top, so nothing before ``interrupt`` may have side effects (the LLM call comes after it).
+    A Y from the LLM goes back to B1; anything else goes on to ``respond`` with ``revision_reply``
+    set to INTENTS["drop"], so the answer carries the drop note. Nothing is asked when B3 found no
+    change worth making.
+    """
+    suggestions = state.get("type_suggestions", "")
+    if NO_CHANGES_MARKER in suggestions.lower():
+        return LG_Command(goto=NODES["respond"])
+    answer = str(LG_interrupt(MESSAGES["revise_question"].format(type_suggestions=suggestions)))
+    if wants_revision(answer, suggestions):
+        return LG_Command(goto=NODES["create_ddl"], update={"revise_ddl": True})
+    return LG_Command(goto=NODES["respond"], update={"revision_reply": INTENTS["drop"]})
+
+
+def wants_revision(answer: str, suggestions: str) -> bool:
+    """Ask the LLM whether the reply to B4's question is a clear yes: it answers just Y or N."""
+    reply = ask("revision-answer", type_suggestions=suggestions, answer=answer)
+    return reply.strip().upper().startswith("Y")
 
 
 def load_dependencies(state: AgentState) -> dict:
@@ -68,16 +110,16 @@ def load_dependencies(state: AgentState) -> dict:
     }
 
 
-def fan_out_tables(state: AgentState) -> list[Send]:
+def fan_out_tables(state: AgentState) -> list[LG_Send]:
     """Router: one parallel run of the C1A/C1B subgraph per table (this is the Send fan-out)."""
     names = table_names(state.get("table_name", ""), state.get("related_tables", []))
     return [
-        Send(NODES["fetch_table"], {"index": i, "table_name": name})
+        LG_Send(NODES["fetch_table"], {"index": i, "table_name": name})
         for i, name in enumerate(names)
     ]
 
 
-def route_after_intent(state: AgentState) -> str | list[Send]:
+def route_after_intent(state: AgentState) -> str | list[LG_Send]:
     """Create needs a valid JSON sample, modify needs a table name; otherwise answer directly.
 
     Modify fans out: one C1A/C1B subgraph run per table (primary + related), in parallel.
@@ -91,6 +133,19 @@ def route_after_intent(state: AgentState) -> str | list[Send]:
     return NODES["respond"]
 
 
+def route_after_ddl(state: AgentState) -> list[str]:
+    """B1 fans out to B2 and B3; after a revision only B2 runs again (B3's types are applied)."""
+    if state.get("revise_ddl"):
+        return [NODES["suggest_keys"]]
+    return [NODES["suggest_keys"], NODES["suggest_types"]]
+
+
+def route_after_keys(state: AgentState) -> str:
+    """First pass: B3's branch carries on to B4, so B2 ends here. After a revision B2 is the only
+    branch left, so it goes to ``respond``."""
+    return NODES["respond"] if state.get("revise_ddl") else LG_END
+
+
 def route_after_dependencies(state: AgentState) -> str:
     return NODES["plan_modification"] if state["table_found"] else NODES["respond"]
 
@@ -102,6 +157,9 @@ def respond(state: AgentState) -> dict:
 
     if intent == INTENTS["create"] and state.get("ddl_script"):
         script = state["ddl_script"]
+        types_text = (
+            MESSAGES["types_applied"] if state.get("revise_ddl") else state.get("type_suggestions", "")
+        )
         reply = "\n\n".join(
             [
                 MESSAGES["ddl_intro"],
@@ -109,7 +167,7 @@ def respond(state: AgentState) -> dict:
                 MESSAGES["keys_heading"],
                 state.get("key_suggestions", ""),
                 MESSAGES["types_heading"],
-                state.get("type_suggestions", ""),
+                types_text,
             ]
         )
     elif intent == INTENTS["modify"] and state.get("modification_plan"):
@@ -128,4 +186,7 @@ def respond(state: AgentState) -> dict:
     else:
         reply = MESSAGES["other"]
 
-    return {"script": script, "reply": reply, "messages": [AIMessage(content=reply)]}
+    if state.get("revision_reply") == INTENTS["drop"]:
+        reply = f"{reply}\n\n{MESSAGES['drop_msg']}"
+
+    return {"script": script, "reply": reply, "messages": [LC_AIMessage(content=reply)]}

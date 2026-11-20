@@ -12,17 +12,19 @@ Variables per template:
   create-ddl        dialect, history, question, schema_name, table_name, json_sample, type_hints
   key-suggestions   dialect, ddl_script
   alternate-types   dialect, ddl_script, json_sample
+  revise-ddl        dialect, ddl_script, type_suggestions
+  revision-answer   type_suggestions, answer
   modification-plan dialect, history, question, schema_name, table_name, dependencies,
                     field_changes
 ``dialect`` is the target database (settings.db_dialect), e.g. PostgreSQL or MySQL.
 """
 
-from langchain_core.messages import BaseMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import BaseMessage as LC_BaseMessage
+from langchain_core.prompts import ChatPromptTemplate as LC_ChatPromptTemplate, MessagesPlaceholder as LC_MessagesPlaceholder
 
-TEMPLATES: dict[str, ChatPromptTemplate] = {
+TEMPLATES: dict[str, LC_ChatPromptTemplate] = {
     # Node A: what does the user want?
-    "intent": ChatPromptTemplate.from_messages(
+    "intent": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -40,12 +42,12 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
                 'Reply with ONLY a JSON object: {{"intent": "create|modify|other", '
                 '"table_name": "<name or empty>", "related_tables": ["<name>"]}}',
             ),
-            MessagesPlaceholder("history"),
+            LC_MessagesPlaceholder("history"),
             ("human", "{question}"),
         ]
     ),
     # Column types of all fields of a JSON sample, in one call (used by B1 and C2).
-    "type-detection": ChatPromptTemplate.from_messages(
+    "type-detection": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -62,7 +64,7 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         ]
     ),
     # Node B1: CREATE TABLE from a JSON sample.
-    "create-ddl": ChatPromptTemplate.from_messages(
+    "create-ddl": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -86,12 +88,12 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
                 "Reply with ONE ```sql code block holding only the script, and nothing else.\n\n"
                 "JSON sample:\n{json_sample}",
             ),
-            MessagesPlaceholder("history"),
+            LC_MessagesPlaceholder("history"),
             ("human", "{question}"),
         ]
     ),
     # Node B2: primary key and index suggestions for the generated script.
-    "key-suggestions": ChatPromptTemplate.from_messages(
+    "key-suggestions": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -105,7 +107,7 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
         ]
     ),
     # Node B3: alternate data types for some fields.
-    "alternate-types": ChatPromptTemplate.from_messages(
+    "alternate-types": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -119,8 +121,39 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
             ("human", "{ddl_script}"),
         ]
     ),
+    # Node B1 again, after the user accepted B3's suggestions (B4): apply them to the script.
+    "revise-ddl": LC_ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a {dialect} expert. Rewrite the CREATE TABLE script the user sends, "
+                "applying the suggested type changes below. Keep every other column, name, "
+                "nullability and constraint exactly as it is.\n"
+                "Reply with ONE ```sql code block holding only the script, and nothing else.\n\n"
+                "Suggested type changes:\n{type_suggestions}",
+            ),
+            ("human", "{ddl_script}"),
+        ]
+    ),
+    # Node B4: read the user's reply to "regenerate the CREATE script with these types?".
+    "revision-answer": LC_ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You read the user's reply to a question. The assistant suggested these data type "
+                "changes for a CREATE TABLE script and asked whether to regenerate the script with "
+                "ALL of them:\n\n{type_suggestions}\n\n"
+                "Answer Y only if the user clearly agrees to apply all the suggested changes, with "
+                "no condition or exception. Answer N for anything else: a refusal, a partial or "
+                "conditional yes ('yes, but not all', 'yes, but skip these fields', 'yes, but let "
+                "me do it'), an unclear reply, or an unrelated message. "
+                "Reply with ONLY the single letter Y or N, nothing else.",
+            ),
+            ("human", "{answer}"),
+        ]
+    ),
     # Node C2: ALTER or recreate.
-    "modification-plan": ChatPromptTemplate.from_messages(
+    "modification-plan": LC_ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -149,14 +182,14 @@ TEMPLATES: dict[str, ChatPromptTemplate] = {
                 "give short reasons, naming the dependent tables affected, then ONE ```sql code "
                 "block with the complete script.",
             ),
-            MessagesPlaceholder("history"),
+            LC_MessagesPlaceholder("history"),
             ("human", "{question}"),
         ]
     ),
 }
 
 
-def get_prompt(name: str, **variables) -> list[BaseMessage]:
+def get_prompt(name: str, **variables) -> list[LC_BaseMessage]:
     """Return the chat messages of template ``name`` filled with ``variables``.
 
     Raises ValueError for an unknown name (listing the valid ones) and for missing or unknown

@@ -14,13 +14,20 @@ from backend import SampleTypes, TableDependencies, agent, graph, llm
 from backend.executor import prepare_statements
 from backend.prompt import get_prompt
 from backend.SampleTypes import describe_changes, detect_types
-from backend.Util import extract_sql, find_json_sample, is_valid_sample, parse_json_object
+from backend.Util import (
+    extract_sql,
+    find_json_sample,
+    is_valid_sample,
+    parse_json_object,
+)
 
 
 class FakeLLM(BaseChatModel):
     """Answers by looking at the system prompt, so parallel nodes cannot get each other's reply."""
 
     intent: str = ""
+    types_reply: str = "No changes suggested."  # what node B3 answers
+    answer_word: str = "N"  # what the B4 reply reader answers: Y or N
     calls: list[str] = []  # the system prompt of every call, to count calls per template
 
     @property
@@ -30,7 +37,9 @@ class FakeLLM(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         system = messages[0].content
         self.calls.append(system)
-        if "route requests" in system:
+        if "read the user's reply" in system:  # revision-answer (B4)
+            text = self.answer_word
+        elif "route requests" in system:
             text = self.intent
         elif "column data type for it" in system:  # type-detection: every field -> "text"
             text = json.dumps({field: "text" for field in json.loads(messages[-1].content)})
@@ -39,14 +48,16 @@ class FakeLLM(BaseChatModel):
         elif "primary key" in system:
             text = "- use id\n```sql\nALTER TABLE orders ADD PRIMARY KEY (id);\n```"
         elif "another PostgreSQL type" in system:
-            text = "No changes suggested."
+            text = self.types_reply
+        elif "applying the suggested type changes" in system:  # revise-ddl (B1 after B4)
+            text = "```sql\nCREATE TABLE orders (id uuid, note text);\n```"
         else:
             text = "Decision: ALTER\nAdditive.\n```sql\nALTER TABLE orders ADD COLUMN x int;\n```"
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
 
-def make_llm(intent: str) -> FakeLLM:
-    return FakeLLM(intent=intent)
+def make_llm(intent: str, types_reply: str = "No changes suggested.") -> FakeLLM:
+    return FakeLLM(intent=intent, types_reply=types_reply)
 
 
 @pytest.fixture(autouse=True)
@@ -170,6 +181,89 @@ def test_create_with_json_runs_b1_b2_b3():
     assert out.intent == "create"
     assert out.script == "CREATE TABLE orders (id int, note text);"
     assert "PRIMARY KEY" in out.text and "No changes suggested." in out.text
+    assert not out.awaiting_revision  # B3 found nothing to change, so B4 does not ask
+
+
+TYPES_TABLE = "| column | current | suggested | why |\n| id | int | uuid | ids look like uuids |"
+CREATE_INTENT = '{"intent": "create", "table_name": "orders"}'
+CREATE_TEXT = 'create table orders {"id": "1", "note": "x"}'
+
+
+def paused_create(answer_word: str = "N"):
+    """Run a create whose B3 suggests a change, so B4 pauses. Returns (fake llm, paused reply).
+
+    ``answer_word`` is what the LLM says when it classifies the user's reply to B4's question."""
+    fake = make_llm(CREATE_INTENT, TYPES_TABLE)
+    fake.answer_word = answer_word
+    fake.calls = []
+    llm.set_llm(fake)
+    return fake, agent.run_agent([], CREATE_TEXT)
+
+
+def count_calls(fake, marker: str) -> int:
+    return sum(marker in call for call in fake.calls)
+
+
+def test_b3_suggestions_pause_the_graph_and_ask_the_human():
+    _, first = paused_create()
+    assert first.awaiting_revision and first.thread_id
+    assert "uuid" in first.text and "Reply **Y**" in first.text
+    assert first.script == "CREATE TABLE orders (id int, note text);"  # the first DDL, for the pane
+    assert "PRIMARY KEY" not in first.text  # respond has not run yet
+
+
+def test_yes_redoes_b1_then_b2_but_not_b3():
+    fake, first = paused_create("Y")
+    out = agent.resume_agent(first.thread_id, "Y")
+    assert not out.awaiting_revision
+    assert out.script == "CREATE TABLE orders (id uuid, note text);"
+    assert "PRIMARY KEY" in out.text and "were applied" in out.text
+    assert "No changes" not in out.text and "| uuid |" not in out.text  # old B3 table is gone
+    assert count_calls(fake, "another PostgreSQL type") == 1  # B3 ran only in the first pass
+    assert count_calls(fake, "suggest a primary key") == 2  # B2 ran for both scripts
+    assert count_calls(fake, "applying the suggested type changes") == 1  # the revision
+
+
+@pytest.mark.parametrize("reply", ["no", "N", "tell me about indexes"])
+def test_any_other_reply_finishes_with_the_original_ddl(reply):
+    fake, first = paused_create()
+    out = agent.resume_agent(first.thread_id, reply)
+    assert not out.awaiting_revision
+    assert out.script == "CREATE TABLE orders (id int, note text);"
+    assert "PRIMARY KEY" in out.text and "uuid" in out.text  # B3's table is still shown
+    assert count_calls(fake, "applying the suggested type changes") == 0
+    assert count_calls(fake, "suggest a primary key") == 1  # B2 was not run again
+
+
+@pytest.mark.parametrize("reply", ["Yes, but not all", "yes but skip these fields", "yes, but lemme do it"])
+def test_partial_yes_is_dropped_with_a_note(reply):
+    fake, first = paused_create("N")  # the LLM says N for anything but a clear yes
+    out = agent.resume_agent(first.thread_id, reply)
+    assert not out.awaiting_revision
+    assert out.script == "CREATE TABLE orders (id int, note text);"  # original DDL kept
+    assert "dropped it" in out.text and "all suggestions or nothing" in out.text
+    assert count_calls(fake, "read the user's reply") == 1
+    assert count_calls(fake, "applying the suggested type changes") == 0
+
+
+def test_llm_y_applies_the_types():
+    fake, first = paused_create("Y")
+    out = agent.resume_agent(first.thread_id, "sure, go ahead with all of them")
+    assert out.script == "CREATE TABLE orders (id uuid, note text);"
+    assert "dropped it" not in out.text
+    assert count_calls(fake, "another PostgreSQL type") == 1
+
+
+def test_anything_but_y_from_the_llm_is_dropped():
+    _, first = paused_create("hmm, let me think about it")
+    out = agent.resume_agent(first.thread_id, "tell me about indexes")
+    assert "dropped it" in out.text
+
+
+def test_each_turn_gets_its_own_thread():
+    _, first = paused_create()
+    second = agent.run_agent([], CREATE_TEXT)
+    assert second.thread_id and second.thread_id != first.thread_id
 
 
 def test_create_without_json_asks_for_it():

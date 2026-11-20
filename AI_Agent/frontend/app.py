@@ -12,7 +12,7 @@ import streamlit as st
 # Streamlit puts this script's folder on sys.path, not the project root where `backend` lives.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.agent import run_agent  # noqa: E402
+from backend.agent import AgentReply, resume_agent, run_agent  # noqa: E402
 from backend.config import settings  # noqa: E402
 from backend.BackendConstants import NODE_LABELS  # noqa: E402
 from backend.executor import execute_script, summarize_script  # noqa: E402
@@ -33,6 +33,8 @@ if "pending_script" in st.session_state:
     st.session_state.script_text = st.session_state.pop("pending_script")
 st.session_state.setdefault("node_status", {})  # graph node -> running | done | error (last run)
 st.session_state.setdefault("exec_log", [])  # one-line summary per executed script
+# Thread of a turn paused on B4's question; while set, the next chat input is the answer to it.
+st.session_state.setdefault("pending_thread", None)
 
 # (kind, node name or label text, indent in px): the graph drawn as a flow, top to bottom.
 FLOW = [
@@ -42,6 +44,7 @@ FLOW = [
     ("lbl", "↳ in parallel", 26),
     ("node", "suggest_keys", 26),
     ("node", "suggest_types", 26),
+    ("node", "ask_revision", 10),
     ("lbl", "↳ modify, table named", 10),
     ("lbl", "↳ once per table, in parallel", 26),
     ("node", "find_table", 26),
@@ -91,6 +94,7 @@ with st.sidebar:
     if st.button("Clear chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.node_status = {}
+        st.session_state.pending_thread = None
         st.rerun()
 
 
@@ -161,18 +165,34 @@ with chat_col: #MIDDLE PANE: chat history and input box
             height=1,
         )
 
-def handle_question(question: str) -> None:
-    """Run the agent for one submitted question and store the outcome in the session.
-    The chat and the script pane are redrawn by the ``st.rerun()`` that follows this call.
-    """
+
+def on_node(name: str, state: str) -> None:
+    """Graph callback: colour the node in the sidebar flow as it starts and ends."""
+    st.session_state.node_status[name] = state
+    render_flow(flow_box)
+
+
+def show_reply(reply: AgentReply) -> None:
+    """Store the agent's reply. A paused turn (B4's question) keeps its thread for the answer."""
+    add_message("assistant", reply.text)
+    if reply.script:
+        st.session_state.pending_script = reply.script
+    st.session_state.pending_thread = reply.thread_id if reply.awaiting_revision else None
+
+
+def show_failure(exc: Exception) -> None:
+    for name, state in st.session_state.node_status.items():
+        if state == "running":
+            st.session_state.node_status[name] = "error"
+    st.session_state.pending_thread = None
+    add_message("assistant", f"Sorry, the agent failed: `{exc}`")
+
+
+def run_turn(question: str) -> None:
+    """A new chat turn: run the graph from the start on the question."""
     # History is taken before the new question is added: the agent gets it as a separate input.
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
     add_message("user", question)
-
-    def on_node(name: str, state: str) -> None:
-        st.session_state.node_status[name] = state
-        render_flow(flow_box)
-
     st.session_state.node_status = {}
     render_flow(flow_box)
     with chat_col:
@@ -181,14 +201,42 @@ def handle_question(question: str) -> None:
         try:
             with st.spinner("Thinking..."):
                 reply = run_agent(history, question, on_node) # Graph being initiated
-            add_message("assistant", reply.text)
-            if reply.script:
-                st.session_state.pending_script = reply.script
+            show_reply(reply)
         except Exception as exc:  # missing token, DB down, ...: show it instead of crashing
-            for name, state in st.session_state.node_status.items():
-                if state == "running":
-                    st.session_state.node_status[name] = "error"
-            add_message("assistant", f"Sorry, the agent failed: `{exc}`")
+            show_failure(exc)
+
+
+def resume_turn(thread_id: str, answer: str) -> None:
+    """Resume the turn paused on B4's question with the user's reply.
+
+    The graph asks the LLM whether it is a Y. Node statuses are kept: B1 to B3 stay green and only
+    the nodes that run again change.
+    """
+    add_message("user", answer)
+    with chat_col:
+        with st.chat_message("user"):
+            st.markdown(answer)
+        try:
+            with st.spinner("Thinking..."):
+                reply = resume_agent(thread_id, answer, on_node)
+            show_reply(reply)
+        except Exception as exc:  # e.g. the app restarted and the paused thread is gone
+            show_failure(exc)
+
+
+def handle_question(question: str) -> None:
+    """The submitted text answers B4's pending question, or starts a new turn.
+
+    Whatever the user types while B4 waits is its answer: a Y regenerates the script with B3's
+    types, anything else finishes the turn with the original script and a note.
+    The chat and the script pane are redrawn by the ``st.rerun()`` that follows this call.
+    """
+    thread_id = st.session_state.pending_thread
+    if thread_id is None:
+        run_turn(question)
+        return
+    st.session_state.pending_thread = None
+    resume_turn(thread_id, question)
 
 
 CHAT_PLACEHOLDER = "e.g. create a table for this order JSON: {...}"  # hint in the empty input box

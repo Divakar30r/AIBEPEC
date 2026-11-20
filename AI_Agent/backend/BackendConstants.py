@@ -5,6 +5,7 @@ INTENTS: dict[str, str] = {
     "create": "create",
     "modify": "modify",
     "other": "other",
+    "drop": "drop",  # only for B4: the reply was not a clear Y, so the revision is dropped
 }
 
 # LangGraph node names.
@@ -13,6 +14,7 @@ NODES: dict[str, str] = {
     "create_ddl": "create_ddl",  # B1
     "suggest_keys": "suggest_keys",  # B2
     "suggest_types": "suggest_types",  # B3
+    "ask_revision": "ask_revision",  # B4 (pauses: asks the human whether to redo B1 with B3's types)
     "fetch_table": "fetch_table",  # subgraph run once per table via Send; holds C1A and C1B
     "find_table": "find_table",  # C1A (inside the subgraph)
     "read_table": "read_table",  # C1B (inside the subgraph)
@@ -27,6 +29,7 @@ NODE_LABELS: dict[str, str] = {
     "create_ddl": "B1 · Create DDL",
     "suggest_keys": "B2 · Suggest keys",
     "suggest_types": "B3 · Alternate types",
+    "ask_revision": "B4 · Ask: revise DDL?",
     "fetch_table": "C1 · Fetch table (per table)",
     "find_table": "C1A · Find table",
     "read_table": "C1B · Read table details",
@@ -59,7 +62,22 @@ MESSAGES: dict[str, str] = {
     "ddl_intro": "Here is the DDL script:",
     "keys_heading": "### Primary key and index suggestions",
     "types_heading": "### Alternate data type suggestions",
+    # Node B4: the question that pauses the graph, and what replaces the B3 table afterwards.
+    "revise_question": (
+        "Node B3 suggests these data type changes:\n\n{type_suggestions}\n\n"
+        "**Regenerate the CREATE script with these types?** Reply **Y**, or just continue chatting."
+    ),
+    "types_applied": "The suggested data types above were applied to the script.",
+    # Added to the final answer when the reply to B4's question was not a clear yes or no.
+    "drop_msg": (
+        "Unable to confirm whether you wanted the revision, so I dropped this conversation.\n"
+        "Please note that the current limitation is that I can either change all suggestions "
+        "or nothing."
+    ),
 }
+
+# Node B3 answers this when nothing is worth changing; B4 then does not ask (compared lower-cased).
+NO_CHANGES_MARKER = "no changes suggested"
 
 # Statements the executor may run; anything else is rejected.
 ALLOWED_SCRIPT_KEYWORDS: list[str] = ["CREATE", "ALTER", "DROP", "COMMENT", "INSERT"]

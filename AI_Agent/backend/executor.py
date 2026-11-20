@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 
-import sqlparse
+from sqlparse import format as SQ_P_format, split as SQ_P_split
 from psycopg import sql
 
 from .BackendConstants import (
@@ -30,8 +30,8 @@ def prepare_statements(script: str) -> list[str]:
     Raises ValueError for an empty script or a statement that is not permitted.
     """
     statements: list[str] = []
-    for raw in sqlparse.split(script):
-        text = sqlparse.format(raw, strip_comments=True).strip().rstrip(";").strip()
+    for raw in SQ_P_split(script):
+        text = SQ_P_format(raw, strip_comments=True).strip().rstrip(";").strip()
         if not text:
             continue
         upper = " ".join(text.upper().split())
@@ -55,7 +55,7 @@ def summarize_script(script: str, max_len: int = 60) -> str:
     try:
         statements = prepare_statements(script)
     except ValueError:  # rejected script: still describe what was attempted
-        statements = [s.strip() for s in sqlparse.split(script) if s.strip()]
+        statements = [s.strip() for s in SQ_P_split(script) if s.strip()]
     if not statements:
         return "(empty script)"
     head = " ".join(statements[0].split("(")[0].split())[:max_len]

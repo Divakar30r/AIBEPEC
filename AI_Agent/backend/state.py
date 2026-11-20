@@ -3,13 +3,13 @@
 import operator
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage as LC_BaseMessage
+from langgraph.graph.message import add_messages as LG_add_messages
 
 
 class AgentState(TypedDict, total=False):
     # Conversation: history followed by the latest user message. `add_messages` appends.
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[LC_BaseMessage], LG_add_messages]
 
     # Node A
     intent: str  # one of INTENTS
@@ -24,6 +24,8 @@ class AgentState(TypedDict, total=False):
     ddl_script: str  # B1
     key_suggestions: str  # B2
     type_suggestions: str  # B3
+    revise_ddl: bool  # B4: the user accepted redoing B1 with B3's types (B1 then B2, not B3 again)
+    revision_reply: str  # B4: INTENTS["drop"] when the reply was not a clear Y
 
     # Modify branch
     # C1A/C1B subgraph runs (one per table, in parallel via Send) append here; `operator.add`
@@ -41,7 +43,7 @@ class AgentState(TypedDict, total=False):
     reply: str  # the text shown to the user
 
 
-def split_messages(state: AgentState) -> tuple[list[BaseMessage], str]:
+def split_messages(state: AgentState) -> tuple[list[LC_BaseMessage], str]:
     """(history, latest user text): the last message is the question, the rest is history."""
     messages = state["messages"]
     last = messages[-1]
