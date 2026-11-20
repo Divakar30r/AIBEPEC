@@ -1,0 +1,34 @@
+Runs once at startup and yields an immutable, versioned registry, so per-row cost collapses to a function invocation. The pipeline is parse → normalize → index → link → topo-sort → compile → freeze.
+1.  Deserialize the JSON array into a rule registry.
+2.  Normalize. Partition each branch's keys against a closed vocabulary: ListStr, RangeInt, Range_YYYYMM and Range_C are domain constraints; every other key is a guard predicate. This is the discriminator the parser needs.
+ AllowedValues: If an object that's the only possible condition and if an array it contains each possibilities (i.e. OR condition) but if multiple k,v pair in a  possibility consider it as AND condition
+ e.g:
+ A)"Table": "PolMaster",
+    "PolicyField": "PolicyType",
+  "AllowedValues": {"ListStr": ["DI","CI","AC","TL","CI-CANCER"]} means that PolicyType can have any of these values
+
+ B)"Table": "PolMaster",
+    "Field": "Language",
+  "AllowedValues": [
+      {"JurisdictionState": "KA","ListStr": ["HINDI","KANNADA","ENGLISH"]},
+      {"JurisdictionState": "KL","ListStr": ["HINDI","MALAYALAM","ENGLISH"]},...
+    means it can have one of the above two combination i.e  (KA & (Language = HINDI||KANNADA||ENGLISH)) || (KL & (Language =HINDI, MALAYALAM, ENGLISH))
+
+ ListStr: Indicates list of strings and those are possible allowed values for the respective field inside that scope
+ RangeInt: From and To in the 2 item list - integer range
+ Range_YYYYMM: From and To in the 2 item list with data in YYYYMM model
+
+ e.g.: 
+     "Table": "PolMaster",
+    "Field": "EffectiveDate",
+    "AllowedValues": {"Range_C": "PolMaster.SystemDate>:D:10"}
+ Range_C: comparing EffectiveDate with PolMaster.SystemDate and atleast 10 days beyond
+ 
+
+ 
+3.  Parse the Range_C mini-DSL (PolMaster.SystemDate>:D:10) into an AST of {ref, op, unit, magnitude} — done once here, never per row.
+4.  Index on the composite key (PolicyTable, PolicyField) as a hash map, giving O(1) rule resolution.
+5.  Link. Extract refs from guards and from Range_C to build a dependency DAG, held as an adjacency list.
+6.  Topologically sort it (Kahn's algorithm) to fix evaluation order. Cycles raise at load time — fail-fast, not at row 40,000.
+7.  Compile each branch to a predicate closure, or emit a CEL / JSONLogic AST. This is partial evaluation: the guard logic is resolved before any row arrives.
+8.  Freeze. Immutable cached singleton, versioned, hot-reloaded when rules change.

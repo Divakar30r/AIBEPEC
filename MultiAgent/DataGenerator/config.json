@@ -1,0 +1,33 @@
+{
+  "units": 10,
+  "workers": 10,
+  "seed": null,
+  "source_rows": 10,
+
+  "primary_key": {"field": "PolicyNumber", "length": 8},
+
+  "tables": {
+    "PolMaster": {"role": "parent"},
+    "PolStakes": {"role": "child", "key_field": "PolicyNumber", "min_per_key": 1, "max_per_key": 3}
+  },
+
+  "paths": {
+    "csv": "../../extPolDetails.csv",
+    "field_desc": "../FieldDesc.MD",
+    "registry_dump": "../DAGRegistry/registry_dump.json",
+    "mapping": "../XternalLoad/mapping.json",
+    "output_dir": "output"
+  },
+
+  "faker_locale": "en_IN",
+  "faker_default": "word",
+  "faker": {
+    "PolMaster.ExpirationDate": "future_date:+1y",
+    "PolMaster.SumInsured": "random_int:100000:5000000",
+    "PolStakes.StakerName": "name",
+    "PolStakes.StakerContact.Address": "city",
+    "PolStakes.StakerContact.mobile": "phone_number",
+    "PolStakes.StakerContact.mail": "email",
+    "PolStakes.StakerStatus": "random_element:active,removed"
+  }
+}

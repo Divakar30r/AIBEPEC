@@ -1,0 +1,109 @@
+[
+  
+  {
+    "Table": "PolMaster",
+    "PolicyField": "PolicyType",
+    "AllowedValues": {"ListStr": ["DI","CI","AC","TL","CI-CANCER"]}
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "Language",
+    "AllowedValues": [
+      {"JurisdictionState": "KA","ListStr": ["HINDI","KANNADA","ENGLISH"]},
+      {"JurisdictionState": "KL","ListStr": ["HINDI","MALAYALAM","ENGLISH"]},
+      {"JurisdictionState": "TN","ListStr": ["HINDI","TAMIL","ENGLISH"]},
+      {"JurisdictionState": "AP","ListStr": ["HINDI","TELUGU","ENGLISH"]},
+      {"JurisdictionState": "TS","ListStr": ["HINDI","TELUGU","ENGLISH"]},
+      {"JurisdictionState": "ROI","ListStr": ["HINDI","ENGLISH"]}
+    ]
+  },
+  {
+    "Table": "PolStakes",
+    "Field": "Gender",
+    "AllowedValues": {"ListStr": ["M","F","T"]}
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "JurisdictionState",
+    "AllowedValues": {"ListStr": ["KA","TN","AP","TS","KL","ROI"]}
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "PolicyStatus",
+    "AllowedValues": {"ListStr": ["Active","Cancelled","Expired","RPU"]}
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "ThirdParty",
+    "AllowedValues": [
+      {"PolicyType": "CI","JurisdictionState": "TN","ListStr": ["STAR","IFFCO-TOKIO"]},
+      {"PolicyType": "TL","JurisdictionState": "TN","ListStr": ["STAR","IFFCO-TOKIO"]},
+      {"PolicyType": "DI","JurisdictionState": "AP","ListStr": ["DIGIT","NEWINDIA"]},
+      {"PolicyType": "CI","JurisdictionState": "ROI","ListStr": ["ICICI"]}
+    ]
+  },
+  {
+    "Table": "PolStakes",
+    "Field": "StakerCodes.Unique",
+    "AllowedValues": [
+      {"PolMaster.PolicyType": "DI","ListStr": ["INS","SPS","CH"]},
+      {"PolMaster.PolicyType": "CI-CANCER","ListStr": ["INS","SPS"]},
+      {"PolMaster.PolicyType": "CI","ListStr": ["INS","SPS","CH","INS+"]},
+      {"PolMaster.PolicyType": "AC","ListStr": ["INS"]},
+      {"PolMaster.PolicyType": "TL","ListStr": ["INS","INS+"]}
+    ]
+  },
+  {
+    "Table": "PolStakes",
+    "Field": "StakerAge",
+    "AllowedValues": [
+      {"StakerCodes.Unique": "INS","RangeInt": [19,65]},
+      {"StakerCodes.Additional": "OWN","RangeInt": [19,80]},
+      {"StakerCodes.Additional": "PAY","RangeInt": [25,65]},
+      {"StakerCodes.Unique": "SPS","RangeInt": [19,65]},
+      {"StakerCodes.Unique": "CH","RangeInt": [1,18]},
+      {"StakerCodes.Unique": "INS+","RangeInt": [66,80]}
+    ]
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "Term",
+    "AllowedValues": [
+      {"PolicyType": "CI","ListStr": ["1Y","2Y"]},
+      {"PolicyType": "AC","ListStr": ["1Y"]},
+      {"PolicyType": "DI","ListStr": ["1Y","2Y"]},
+      {"PolicyType": "CI-CANCER","ListStr": ["1Y","2Y","5Y"]},
+      {"PolicyType": "TL","ListStr": ["10Y","20Y"]}
+    ]
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "Frequency",
+    "AllowedValues": [
+      {"PolicyType": "CI","ListStr": ["Yearly"]},
+      {"PolicyType": "CI-CANCER","ListStr": ["Yearly"]},
+      {"PolicyType": "DI","ListStr": ["Yearly","HalfYearly"]},
+      {"PolicyType": "TL","ListStr": ["Yearly","HalfYearly","Quarterly"]},
+      {"PolicyType": "AC","ListStr": ["Yearly"]}
+    ]
+  },
+  {
+    "Table": "PolStakes",
+    "Field": "StakerCodes.Additional",
+    "AllowedValues": [
+      {"StakerCodes.Unique": "INS","ListStr": ["OWN","PAY"]},
+      {"StakerCodes.Unique": "INS+","ListStr": ["OWN","PAY"]}
+    ]
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "SystemDate",
+    "AllowedValues": {"Range_YYYYMM": [201001,202505]}
+  },
+  {
+    "Table": "PolMaster",
+    "Field": "EffectiveDate",
+    "AllowedValues": {"Range_C": "PolMaster.SystemDate>:D:10"}
+  }
+
+]

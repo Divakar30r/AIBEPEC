@@ -1,0 +1,73 @@
+"""Central settings. Secrets come from .env / environment; tunables live here with env overrides."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+HERE = Path(__file__).resolve().parent
+load_dotenv(HERE / ".env")
+
+
+def _env(name: str, default: str) -> str:
+    return os.getenv(name, default)
+
+
+def _csv_list(name: str, default: str) -> tuple[str, ...]:
+    return tuple(x.strip() for x in _env(name, default).split(",") if x.strip())
+
+
+@dataclass(frozen=True)
+class Settings:
+    # ---- input files ------------------------------------------------------
+    csv_path: Path = Path(_env("CSV_PATH", str(HERE.parent.parent / "extPolDetails.csv")))
+    field_desc_path: Path = Path(_env("FIELD_DESC_PATH", str(HERE.parent / "FieldDesc.MD")))
+
+    # ---- chunking ---------------------------------------------------------
+    row_chunk_size: int = int(_env("ROW_CHUNK_SIZE", "100"))  # rows per chunk (min rows per chunk)
+    max_rows: int = int(_env("MAX_ROWS", "1000"))  # rows read from the CSV; 0 = all
+    sample_values: int = int(_env("SAMPLE_VALUES", "8"))  # example values / top values per column chunk
+    # Columns whose raw values must never leave the machine: only value *shapes* are described.
+    redact_columns: tuple[str, ...] = field(
+        default_factory=lambda: _csv_list("REDACT_COLUMNS", "customer_name,aadhaar_masked")
+    )
+
+    # ---- embeddings (OpenAI) ---------------------------------------------
+    openai_api_key: str = _env("OPENAI_API_KEY", "")
+    embed_model: str = _env("EMBED_MODEL", "text-embedding-3-small")
+    embed_dim: int = int(_env("EMBED_DIM", "1536"))
+    embed_batch: int = int(_env("EMBED_BATCH", "64"))
+
+    # ---- postgres / pgvector ---------------------------------------------
+    pg_host: str = _env("PG_HOST", "localhost")
+    pg_port: int = int(_env("PG_PORT", "5432"))
+    pg_db: str = _env("PG_DB", "multiagent")
+    pg_user: str = _env("PG_USER", "postgres")
+    pg_password: str = _env("PG_PASSWORD", "")
+    pg_table: str = _env("PG_TABLE", "csv_column_chunks")
+
+    # ---- LLM: Hugging Face router, Featherless AI provider (OpenAI-compatible)
+    hf_token: str = _env("HUGGINGFACEHUB_API_TOKEN", "")
+    hf_model_id: str = _env("HF_MODEL_ID", "Qwen/Qwen2.5-Coder-32B-Instruct")
+    hf_provider: str = _env("HF_PROVIDER", "featherless-ai")  # appended to the model id as ':<provider>'
+    hf_base_url: str = _env("HF_BASE_URL", "https://router.huggingface.co/v1")
+    hf_max_new_tokens: int = int(_env("HF_MAX_NEW_TOKENS", "2000"))
+    hf_temperature: float = float(_env("HF_TEMPERATURE", "0.1"))
+
+    @property
+    def hf_model(self) -> str:
+        """Router model string, e.g. 'Qwen/Qwen2.5-Coder-32B-Instruct:featherless-ai'."""
+        return f"{self.hf_model_id}:{self.hf_provider}" if self.hf_provider else self.hf_model_id
+
+    # ---- retrieval for schema matching -----------------------------------
+    top_k_per_field: int = int(_env("TOP_K_PER_FIELD", "6"))
+
+    @property
+    def pg_dsn(self) -> str:
+        return (f"host={self.pg_host} port={self.pg_port} dbname={self.pg_db} "
+                f"user={self.pg_user} password={self.pg_password}")
+
+
+settings = Settings()

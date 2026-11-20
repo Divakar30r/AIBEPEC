@@ -1,0 +1,559 @@
+{
+  "version": "4e8adfd54c80",
+  "evaluation_order": [
+    "PolMaster.JurisdictionState",
+    "PolMaster.PolicyStatus",
+    "PolMaster.PolicyType",
+    "PolMaster.SystemDate",
+    "PolStakes.Gender",
+    "PolMaster.Language",
+    "PolMaster.Frequency",
+    "PolMaster.Term",
+    "PolMaster.ThirdParty",
+    "PolStakes.StakerCodes.Unique",
+    "PolMaster.EffectiveDate",
+    "PolStakes.StakerCodes.Additional",
+    "PolStakes.StakerAge"
+  ],
+  "dependency_graph": {
+    "PolMaster.JurisdictionState": [
+      "PolMaster.Language",
+      "PolMaster.ThirdParty"
+    ],
+    "PolMaster.PolicyType": [
+      "PolMaster.Frequency",
+      "PolMaster.Term",
+      "PolMaster.ThirdParty",
+      "PolStakes.StakerCodes.Unique"
+    ],
+    "PolStakes.StakerCodes.Unique": [
+      "PolStakes.StakerAge",
+      "PolStakes.StakerCodes.Additional"
+    ],
+    "PolStakes.StakerCodes.Additional": [
+      "PolStakes.StakerAge"
+    ],
+    "PolMaster.SystemDate": [
+      "PolMaster.EffectiveDate"
+    ]
+  },
+  "rules": {
+    "PolMaster.PolicyType": {
+      "depends_on": [],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "ListStr",
+          "allowed": [
+            "DI",
+            "CI",
+            "AC",
+            "TL",
+            "CI-CANCER"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.Language": {
+      "depends_on": [
+        "PolMaster.JurisdictionState"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "KA"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "KANNADA",
+            "ENGLISH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "KL"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "MALAYALAM",
+            "ENGLISH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "TN"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "TAMIL",
+            "ENGLISH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "AP"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "TELUGU",
+            "ENGLISH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "TS"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "TELUGU",
+            "ENGLISH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.JurisdictionState": "ROI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "HINDI",
+            "ENGLISH"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolStakes.Gender": {
+      "depends_on": [],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "ListStr",
+          "allowed": [
+            "M",
+            "F",
+            "T"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.JurisdictionState": {
+      "depends_on": [],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "ListStr",
+          "allowed": [
+            "KA",
+            "TN",
+            "AP",
+            "TS",
+            "KL",
+            "ROI"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.PolicyStatus": {
+      "depends_on": [],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "ListStr",
+          "allowed": [
+            "Active",
+            "Cancelled",
+            "Expired",
+            "RPU"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.ThirdParty": {
+      "depends_on": [
+        "PolMaster.JurisdictionState",
+        "PolMaster.PolicyType"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI",
+            "PolMaster.JurisdictionState": "TN"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "STAR",
+            "IFFCO-TOKIO"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "TL",
+            "PolMaster.JurisdictionState": "TN"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "STAR",
+            "IFFCO-TOKIO"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "DI",
+            "PolMaster.JurisdictionState": "AP"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "DIGIT",
+            "NEWINDIA"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI",
+            "PolMaster.JurisdictionState": "ROI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "ICICI"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolStakes.StakerCodes.Unique": {
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolMaster.PolicyType": "DI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "INS",
+            "SPS",
+            "CH"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI-CANCER"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "INS",
+            "SPS"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "INS",
+            "SPS",
+            "CH",
+            "INS+"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "AC"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "INS"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "TL"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "INS",
+            "INS+"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolStakes.StakerAge": {
+      "depends_on": [
+        "PolStakes.StakerCodes.Additional",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "INS"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            19,
+            65
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Additional": "OWN"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            19,
+            80
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Additional": "PAY"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            25,
+            65
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "SPS"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            19,
+            65
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "CH"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            1,
+            18
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "INS+"
+          },
+          "constraint": "RangeInt",
+          "allowed": [
+            66,
+            80
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.Term": {
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "1Y",
+            "2Y"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "AC"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "1Y"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "DI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "1Y",
+            "2Y"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI-CANCER"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "1Y",
+            "2Y",
+            "5Y"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "TL"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "10Y",
+            "20Y"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.Frequency": {
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "Yearly"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "CI-CANCER"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "Yearly"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "DI"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "Yearly",
+            "HalfYearly"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "TL"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "Yearly",
+            "HalfYearly",
+            "Quarterly"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolMaster.PolicyType": "AC"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "Yearly"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolStakes.StakerCodes.Additional": {
+      "depends_on": [
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "branches": [
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "INS"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "OWN",
+            "PAY"
+          ],
+          "refs": []
+        },
+        {
+          "guards": {
+            "PolStakes.StakerCodes.Unique": "INS+"
+          },
+          "constraint": "ListStr",
+          "allowed": [
+            "OWN",
+            "PAY"
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.SystemDate": {
+      "depends_on": [],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "Range_YYYYMM",
+          "allowed": [
+            201001,
+            202505
+          ],
+          "refs": []
+        }
+      ]
+    },
+    "PolMaster.EffectiveDate": {
+      "depends_on": [
+        "PolMaster.SystemDate"
+      ],
+      "branches": [
+        {
+          "guards": {},
+          "constraint": "Range_C",
+          "allowed": "PolMaster.SystemDate>:D:10",
+          "refs": [
+            "PolMaster.SystemDate"
+          ]
+        }
+      ]
+    }
+  }
+}
