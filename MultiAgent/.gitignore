@@ -2,3 +2,6 @@ __pycache__/
 .pytest_cache/
 .env
 output/
+LLMEffects/logs/
+.csvLLMEffects/logs/
+*.csv
