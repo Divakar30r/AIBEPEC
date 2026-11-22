@@ -2,7 +2,7 @@
   
   {
     "Table": "PolMaster",
-    "PolicyField": "PolicyType",
+    "Field": "PolicyType",
     "AllowedValues": {"ListStr": ["DI","CI","AC","TL","CI-CANCER"]}
   },
   {
@@ -46,11 +46,11 @@
     "Table": "PolStakes",
     "Field": "StakerCodes.Unique",
     "AllowedValues": [
-      {"PolMaster.PolicyType": "DI","ListStr": ["INS","SPS","CH"]},
+      {"PolMaster.PolicyType": "DI","ListStr": ["INS"]},
       {"PolMaster.PolicyType": "CI-CANCER","ListStr": ["INS","SPS"]},
-      {"PolMaster.PolicyType": "CI","ListStr": ["INS","SPS","CH","INS+"]},
+      {"PolMaster.PolicyType": "CI","ListStr": ["INS","SPS","CH"]},
       {"PolMaster.PolicyType": "AC","ListStr": ["INS"]},
-      {"PolMaster.PolicyType": "TL","ListStr": ["INS","INS+"]}
+      {"PolMaster.PolicyType": "TL","ListStr": ["INS"]}
     ]
   },
   {
@@ -90,15 +90,15 @@
   {
     "Table": "PolStakes",
     "Field": "StakerCodes.Additional",
+  
     "AllowedValues": [
-      {"StakerCodes.Unique": "INS","ListStr": ["OWN","PAY"]},
-      {"StakerCodes.Unique": "INS+","ListStr": ["OWN","PAY"]}
+      {"StakerCodes.Unique": "INS","ListStr": ["OWN","PAY"]}
     ]
   },
   {
     "Table": "PolMaster",
     "Field": "SystemDate",
-    "AllowedValues": {"Range_YYYYMM": [201001,202505]}
+    "AllowedValues": {"Range_YYYYMMDD": [20100101,20250501]}
   },
   {
     "Table": "PolMaster",

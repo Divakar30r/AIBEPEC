@@ -27,7 +27,7 @@ from typing import Any, Callable, Mapping
 DEFAULT_RULES_PATH = Path(__file__).resolve().parent.parent / "PolRef.json"
 
 # Closed vocabulary: these keys are domain constraints, every other key is a guard.
-DOMAIN_KEYS = frozenset({"ListStr", "RangeInt", "Range_YYYYMM", "Range_C"})
+DOMAIN_KEYS = frozenset({"ListStr", "RangeInt", "Range_YYYYMM", "Range_YYYYMMDD", "Range_C"})
 
 Node = tuple[str, str]  # (table, field)
 Row = Mapping[str, Mapping[str, Any]]  # {table: {field: value}}
@@ -187,6 +187,9 @@ def _compile_check(constraint: str, spec: Any, table: str, tables: frozenset[str
     elif constraint == "Range_YYYYMM":
         lo, hi = spec
         dom = lambda ctx, v: _is_int(v) and lo <= int(v) <= hi
+    elif constraint == "Range_YYYYMMDD":
+        lo, hi = spec
+        dom = lambda ctx, v: _is_yyyymmdd(v) and lo <= int(v) <= hi
     elif constraint == "Range_C":
         ast = parse_range_c(spec, table, tables)
         refs = (ast.ref,)
@@ -201,6 +204,18 @@ def _is_int(v: Any) -> bool:
         int(v)
         return not isinstance(v, bool)
     except (TypeError, ValueError):
+        return False
+
+
+def _is_yyyymmdd(v: Any) -> bool:
+    """8-digit value that is a real calendar date (rejects e.g. 20230231)."""
+    s = str(v).strip()
+    if not re.fullmatch(r"\d{8}", s):
+        return False
+    try:
+        dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
+        return True
+    except ValueError:
         return False
 
 

@@ -24,6 +24,7 @@ from typing import Any
 
 from faker import Faker
 
+from count_rules import check_counts
 from schema import Branch, Node, Plan, build_plan
 from settings import Config, load_config
 from source import load_xlsource
@@ -73,6 +74,10 @@ def value_from_branch(b: Branch, ctx: dict[str, dict[str, Any]], table: str, rng
         lo, hi = b.allowed
         months = [y * 100 + m for y in range(lo // 100, hi // 100 + 1) for m in range(1, 13) if lo <= y * 100 + m <= hi]
         return rng.choice(months)
+    if b.constraint == "Range_YYYYMMDD":
+        lo, hi = (_to_date(x) for x in b.allowed)
+        d = lo + timedelta(days=rng.randint(0, (hi - lo).days))
+        return int(d.strftime("%Y%m%d"))
     if b.constraint == "Range_C":
         ast = parse_range_c(b.allowed, table)
         ref = ctx.get(ast.ref[0], {}).get(ast.ref[1])
@@ -90,12 +95,31 @@ def value_from_branch(b: Branch, ctx: dict[str, dict[str, Any]], table: str, rng
 # --------------------------------------------------------------------------- #
 # Validation (against the DAG registry built from PolRef.json)
 # --------------------------------------------------------------------------- #
-def validate(registry, cfg: Config, draft: Draft) -> list[dict[str, Any]]:
+def key_fields(cfg: Config) -> set[str]:
+    return {f"{cfg.parent}.{cfg.key_field}"} | {f"{t}.{c.get('key_field', cfg.key_field)}" for t, c in cfg.children.items()}
+
+
+def check_all(registry, cfg: Config, plan: Plan, draft: Draft, levels_done: int) -> list[dict[str, Any]]:
+    """Field rules (registry) + count rules (count_dump), each only once its inputs were attempted."""
+    attempted = plan.attempted(levels_done, key_fields(cfg))
+    return validate(registry, cfg, draft, plan, attempted) + check_counts(plan.count_rules, draft, attempted)
+
+
+def validate(registry, cfg: Config, draft: Draft, plan: Plan | None = None,
+             attempted: set[str] | None = None) -> list[dict[str, Any]]:
     parent = cfg.parent
     out: list[dict[str, Any]] = []
 
+    def ready(t: str, f: str) -> bool:
+        """Enforce a field rule only when the field and everything it depends on (dependency_graph) were attempted."""
+        if attempted is None or plan is None:
+            return True
+        return f"{t}.{f}" in attempted and all(f"{a}.{b}" in attempted for a, b in (plan.deps or {}).get((t, f), ()))
+
     def add(v, record: int | None) -> None:
-        out.append({"table": v.table, "field": v.field, "record": record, "value": v.value, "reason": v.reason})
+        if ready(v.table, v.field):
+            out.append({"kind": "field", "table": v.table, "field": v.field, "record": record,
+                        "value": v.value, "reason": v.reason})
 
     for v in registry.validate_row({parent: draft[parent]}):
         if v.table == parent:
@@ -132,7 +156,7 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
         for lvl in range(start_lvl, len(plan.levels)):
             nodes = plan.levels[lvl]
             if lvl > 0:
-                unit.violations = validate(registry, cfg, draft)
+                unit.violations = check_all(registry, cfg, plan, draft, lvl)
                 if unit.violations:
                     unit.status, unit.halted_before_level = "needs_review", lvl
                     return unit
@@ -152,7 +176,7 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
                     else:                                                           # D) Faker
                         rec[fld] = faker_value(cfg.faker.get(target, cfg.faker_default), fake, rng)
             unit.levels_done = lvl + 1
-        unit.violations = validate(registry, cfg, draft)  # final check after the last level
+        unit.violations = check_all(registry, cfg, plan, draft, len(plan.levels))  # final check after the last level
         unit.status = "needs_review" if unit.violations else "completed"
         unit.halted_before_level = len(plan.levels) if unit.violations else None
     except Exception as e:  # keep other units running
@@ -181,7 +205,8 @@ def run_unit(unit_id: int, key: str, cfg: Config, plan: Plan, registry, xlsource
 
 
 def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan: Plan, registry,
-               xlsource: list[dict[str, Any]], seed: int | None = None) -> dict[str, Any]:
+               xlsource: list[dict[str, Any]], seed: int | None = None,
+               deletions: dict[str, list[int]] | None = None) -> dict[str, Any]:
     """Apply manual corrections to a halted unit and resume from the level it stopped before.
 
     u is a unit dict as stored in a run file. fixes: [{"table", "record", "field", "value"}].
@@ -190,14 +215,25 @@ def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan
     if u["status"] != "needs_review" or u["halted_before_level"] is None:
         raise ValueError(f"unit {u['unit_id']} is not halted for review")
     draft = json.loads(json.dumps(u["draft"]))  # deep copy
-    for f in fixes:
+    for f in fixes:  # values first: record indices refer to the draft as shown in the UI
         rec = draft[f["table"]] if f["record"] is None else draft[f["table"]][f["record"]]
         rec[f["field"]] = f["value"]
+    removed = []
+    for table, idxs in (deletions or {}).items():
+        if table == cfg.parent:
+            raise ValueError("deleting the parent record deletes the unit - use delete_unit_in_file")
+        for i in sorted(set(idxs), reverse=True):
+            del draft[table][i]
+        removed.append(f"{table} records {sorted(set(idxs))}")
+        lo = cfg.children.get(table, {}).get("min_per_key")
+        if lo is not None and len(draft[table]) < lo:
+            removed.append(f"{table} now has {len(draft[table])} record(s), below configured min {lo}")
     attempt = int(u.get("attempts", 0)) + 1
     start = int(u["halted_before_level"])
     unit = Unit(u["unit_id"], u["key"], draft, levels_done=start, notes=list(u["notes"]))
-    unit.notes.append(f"re-run #{attempt} from level {start} with corrections: " +
-                      ", ".join(f"{f['table']}.{f['field']}={f['value']!r}" for f in fixes))
+    unit.notes.append(f"re-run #{attempt} from level {start}; corrections: " +
+                      (", ".join(f"{f['table']}.{f['field']}={f['value']!r}" for f in fixes) or "none") +
+                      ("; deleted " + "; ".join(removed) if removed else ""))
     rng, fake = _rngs(cfg, seed, unit.unit_id, attempt)
     unit = _advance(unit, start, cfg, plan, registry, xlsource, rng, fake)
     return {"unit_id": unit.unit_id, "key": unit.key, "status": unit.status,
@@ -205,14 +241,25 @@ def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan
             "violations": unit.violations, "notes": unit.notes, "draft": unit.draft, "attempts": attempt}
 
 
-def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]], cfg: Config | None = None) -> dict[str, Any]:
-    """Re-run one unit of a saved run file and write the result back into that file."""
+def delete_unit_in_file(run_path: Path | str, unit_id: int) -> None:
+    """Delete the parent record, i.e. the whole unit, from a saved run file."""
+    path = Path(run_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["units"] = [u for u in data["units"] if u["unit_id"] != unit_id]
+    data.setdefault("deleted_units", []).append(unit_id)
+    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+
+
+def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]], cfg: Config | None = None,
+                  deletions: dict[str, list[int]] | None = None) -> dict[str, Any]:
+    """Apply corrections and/or delete related records, re-run one unit, write it back into the file."""
     cfg = cfg or load_config()
     path = Path(run_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     idx = next(i for i, u in enumerate(data["units"]) if u["unit_id"] == unit_id)
     plan, registry = build_plan(cfg), load_rules()
-    new = rerun_unit(data["units"][idx], fixes, cfg, plan, registry, load_xlsource(cfg, random.Random()))
+    new = rerun_unit(data["units"][idx], fixes, cfg, plan, registry, load_xlsource(cfg, random.Random()),
+                     deletions=deletions)
     data["units"][idx] = new
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     return new
@@ -228,6 +275,13 @@ def run(cfg: Config) -> Path:
     if registry.version != plan.version:
         warnings.append(f"registry_dump.json (version {plan.version}) is stale vs PolRef.json "
                         f"(version {registry.version}); rerun DAGRegistry/load_rules.py")
+    if plan.count_rules is None:
+        warnings.append("count_dump.json not found - count rules are not checked")
+    else:
+        import hashlib
+        src = cfg.count_dump.parent.parent / plan.count_rules.get("source", "PolRefCount.json")
+        if src.exists() and hashlib.sha256(src.read_bytes()).hexdigest()[:12] != plan.count_version:
+            warnings.append(f"count_dump.json is stale vs {src.name}; rerun DAGRegistry/load_count_rules.py")
     rng = random.Random(cfg.seed)
     xlsource = load_xlsource(cfg, rng)
     used: set[str] = set()
@@ -239,9 +293,11 @@ def run(cfg: Config) -> Path:
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     result = {
-        "run_id": run_id, "registry_version": registry.version, "warnings": warnings,
+        "run_id": run_id, "registry_version": registry.version, "count_rules_version": plan.count_version,
+        "warnings": warnings,
         "levels": [[f"{t}.{f}" for t, f in lv] for lv in plan.levels],
         "xlsource_rows": len(xlsource),
+        "per_key": {t: [c["min_per_key"], c["max_per_key"]] for t, c in cfg.children.items()},
         "units": [{"unit_id": u.unit_id, "key": u.key, "status": u.status,
                    "halted_before_level": u.halted_before_level, "levels_done": u.levels_done,
                    "violations": u.violations, "notes": u.notes, "draft": u.draft} for u in units],

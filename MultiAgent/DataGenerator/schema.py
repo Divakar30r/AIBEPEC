@@ -58,6 +58,13 @@ class Plan:
     version: str
     rules: dict[Node, tuple[Branch, ...]]
     levels: tuple[tuple[Node, ...], ...]  # fields per topological level; level 0 has no dependencies
+    deps: dict[Node, tuple[Node, ...]] = None  # field -> fields it depends on (from dependency_graph)
+    count_rules: dict[str, Any] | None = None  # count_dump.json
+    count_version: str | None = None
+
+    def attempted(self, levels_done: int, key_fields: set[str]) -> set[str]:
+        """'Table.Field' of everything generated so far (including fields left blank)."""
+        return key_fields | {f"{t}.{f}" for lv in self.levels[:levels_done] for t, f in lv}
 
     def level_of(self, node: Node) -> int:
         return next(i for i, lv in enumerate(self.levels) if node in lv)
@@ -89,4 +96,12 @@ def build_plan(cfg: Config) -> Plan:
         level.setdefault(n, 0)  # fields without rules have no dependencies
     top = max((level[n] for n in nodes), default=0)
     levels = tuple(tuple(n for n in nodes if level[n] == i) for i in range(top + 1))
-    return Plan(dump["version"], rules, levels)
+    graph_deps: dict[Node, list[Node]] = {}
+    for src, dependents in dump.get("dependency_graph", {}).items():
+        for d in dependents:
+            graph_deps.setdefault(split_ref(d), []).append(split_ref(src))
+    count_rules = None
+    if cfg.count_dump and cfg.count_dump.exists():
+        count_rules = json.loads(cfg.count_dump.read_text(encoding="utf-8"))
+    return Plan(dump["version"], rules, levels, {n: tuple(d) for n, d in graph_deps.items()},
+                count_rules, count_rules.get("version") if count_rules else None)

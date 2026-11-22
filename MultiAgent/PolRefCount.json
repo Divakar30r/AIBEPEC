@@ -1,0 +1,44 @@
+[
+  {
+    "Table": "PolStakes",
+      "Field": "StakerCodes.Unique",
+      "Value":"INS",
+      "Combination": [
+        {"PolMaster.PolicyType": ["*"], "Count":[1,1]}
+      ]
+  },
+ {
+    "Table": "PolStakes",
+      "Field": "StakerCodes.Unique",
+      "Value":"SPS",
+      "Combination": [
+        {"PolMaster.PolicyType": ["AC,CI,CI-CANCER"], "Count":[0,1]},
+        {"PolMaster.PolicyType": ["DI","TL"], "Count":0}
+      ]
+  },
+ {
+    "Table": "PolStakes",
+      "Field": "StakerCodes.Unique",
+      "Value":"CH",
+      "Combination": [
+        {"PolMaster.PolicyType": ["AC,CI,CI-CANCER"], "Count":[0,2]},
+        {"PolMaster.PolicyType": ["DI","TL"], "Count":0}
+      ]
+  },
+  {
+    "Table": "PolStakes",
+      "Field": "StakerCodes.Additional",
+      "Value":"OWN",
+      "Combination": [
+        {"PolMaster.PolicyType": ["*"],"PolStakes.StakerCodes.Unique": ["INS,SPS"], "Count":[0,1]}
+      ]
+  },
+  {
+    "Table": "PolStakes",
+      "Field": "StakerCodes.Additional",
+      "Value":"PAY",
+      "Combination": [
+        {"PolMaster.PolicyType": ["*"],"PolStakes.StakerCodes.Unique": ["INS,SPS"], "Count":[0,1]}
+      ]
+  }
+]  

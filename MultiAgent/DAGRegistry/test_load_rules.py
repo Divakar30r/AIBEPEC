@@ -48,9 +48,11 @@ def test_range_int_with_guard(reg):
     assert not reg.validate_field("PolStakes", "StakerAge", ctx)
 
 
-def test_range_yyyymm(reg):
-    assert reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 202001}))
-    assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 202506}))
+def test_range_yyyymmdd(reg):
+    assert reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 20200115}))
+    assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 20250502}))  # after range
+    assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 20230231}))  # not a real date
+    assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 202001}))    # month only
 
 
 def test_range_c_days(reg):

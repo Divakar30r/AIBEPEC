@@ -1,0 +1,236 @@
+{
+  "version": "66e6923bff34",
+  "source": "PolRefCount.json",
+  "semantics": {
+    "no_match": "allowed",
+    "overlap": "disallow (count 0) takes precedence",
+    "conditions": "AND within a combination"
+  },
+  "involved_fields_by_target": {
+    "PolStakes.StakerCodes.Additional": [
+      "PolMaster.PolicyType",
+      "PolStakes.StakerCodes.Additional",
+      "PolStakes.StakerCodes.Unique"
+    ],
+    "PolStakes.StakerCodes.Unique": [
+      "PolMaster.PolicyType",
+      "PolStakes.StakerCodes.Unique"
+    ]
+  },
+  "rules": [
+    {
+      "target": "PolStakes.StakerCodes.Unique",
+      "value": "INS",
+      "counts_records_of": "PolStakes",
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "involved_fields": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "combinations": [
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "any": true
+            }
+          },
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "allowed": true,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "PolStakes.StakerCodes.Unique",
+      "value": "SPS",
+      "counts_records_of": "PolStakes",
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "involved_fields": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "combinations": [
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "in": [
+                "AC",
+                "CI",
+                "CI-CANCER"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "allowed": true,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        },
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "in": [
+                "DI",
+                "TL"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 0
+          },
+          "allowed": false,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "PolStakes.StakerCodes.Unique",
+      "value": "CH",
+      "counts_records_of": "PolStakes",
+      "depends_on": [
+        "PolMaster.PolicyType"
+      ],
+      "involved_fields": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "combinations": [
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "in": [
+                "AC",
+                "CI",
+                "CI-CANCER"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 2
+          },
+          "allowed": true,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        },
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "in": [
+                "DI",
+                "TL"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 0
+          },
+          "allowed": false,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "PolStakes.StakerCodes.Additional",
+      "value": "OWN",
+      "counts_records_of": "PolStakes",
+      "depends_on": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "involved_fields": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Additional",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "combinations": [
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "any": true
+            },
+            "PolStakes.StakerCodes.Unique": {
+              "in": [
+                "INS",
+                "SPS"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "allowed": true,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Additional",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "PolStakes.StakerCodes.Additional",
+      "value": "PAY",
+      "counts_records_of": "PolStakes",
+      "depends_on": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "involved_fields": [
+        "PolMaster.PolicyType",
+        "PolStakes.StakerCodes.Additional",
+        "PolStakes.StakerCodes.Unique"
+      ],
+      "combinations": [
+        {
+          "when": {
+            "PolMaster.PolicyType": {
+              "any": true
+            },
+            "PolStakes.StakerCodes.Unique": {
+              "in": [
+                "INS",
+                "SPS"
+              ]
+            }
+          },
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "allowed": true,
+          "involved_fields": [
+            "PolMaster.PolicyType",
+            "PolStakes.StakerCodes.Additional",
+            "PolStakes.StakerCodes.Unique"
+          ]
+        }
+      ]
+    }
+  ]
+}

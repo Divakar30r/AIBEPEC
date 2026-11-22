@@ -1,5 +1,5 @@
 {
-  "version": "4e8adfd54c80",
+  "version": "16c8c2eef4c3",
   "evaluation_order": [
     "PolMaster.JurisdictionState",
     "PolMaster.PolicyStatus",
@@ -248,9 +248,7 @@
           },
           "constraint": "ListStr",
           "allowed": [
-            "INS",
-            "SPS",
-            "CH"
+            "INS"
           ],
           "refs": []
         },
@@ -273,8 +271,7 @@
           "allowed": [
             "INS",
             "SPS",
-            "CH",
-            "INS+"
+            "CH"
           ],
           "refs": []
         },
@@ -294,8 +291,7 @@
           },
           "constraint": "ListStr",
           "allowed": [
-            "INS",
-            "INS+"
+            "INS"
           ],
           "refs": []
         }
@@ -512,17 +508,6 @@
             "PAY"
           ],
           "refs": []
-        },
-        {
-          "guards": {
-            "PolStakes.StakerCodes.Unique": "INS+"
-          },
-          "constraint": "ListStr",
-          "allowed": [
-            "OWN",
-            "PAY"
-          ],
-          "refs": []
         }
       ]
     },
@@ -531,10 +516,10 @@
       "branches": [
         {
           "guards": {},
-          "constraint": "Range_YYYYMM",
+          "constraint": "Range_YYYYMMDD",
           "allowed": [
-            201001,
-            202505
+            20100101,
+            20250501
           ],
           "refs": []
         }
