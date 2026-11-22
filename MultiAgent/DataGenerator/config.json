@@ -1,8 +1,9 @@
 {
-  "units": 10,
-  "workers": 10,
+  "units": 5,
+  "workers": 5,
   "seed": null,
-  "source_rows": 10,
+  "source_rows": 5,
+  "llm_review": true,
 
   "primary_key": {"field": "PolicyNumber", "length": 8},
 

@@ -250,19 +250,93 @@ def delete_unit_in_file(run_path: Path | str, unit_id: int) -> None:
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
-def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]], cfg: Config | None = None,
-                  deletions: dict[str, list[int]] | None = None) -> dict[str, Any]:
-    """Apply corrections and/or delete related records, re-run one unit, write it back into the file."""
-    cfg = cfg or load_config()
-    path = Path(run_path)
+def _rerun_once(path: Path, unit_id: int, fixes: list[dict[str, Any]], cfg: Config,
+                deletions: dict[str, list[int]] | None = None, by_llm: bool = False) -> dict[str, Any]:
+    """Apply fixes/deletions, re-run one unit from its halted level, write it back. No LLM call."""
     data = json.loads(path.read_text(encoding="utf-8"))
     idx = next(i for i, u in enumerate(data["units"]) if u["unit_id"] == unit_id)
+    old = data["units"][idx]
+    applied = list(old.get("llm_applied", []))
+    if by_llm:  # remember what the LLM changed (shown + kept editable in the UI)
+        for f in fixes:
+            rec = old["draft"][f["table"]] if f["record"] is None else old["draft"][f["table"]][f["record"]]
+            applied.append({**{k: f[k] for k in ("table", "record", "field")}, "from": rec.get(f["field"]),
+                            "to": f["value"], "level": old["halted_before_level"],
+                            "attempt": int(old.get("attempts", 0)) + 1})
     plan, registry = build_plan(cfg), load_rules()
-    new = rerun_unit(data["units"][idx], fixes, cfg, plan, registry, load_xlsource(cfg, random.Random()),
-                     deletions=deletions)
+    new = rerun_unit(old, fixes, cfg, plan, registry, load_xlsource(cfg, random.Random()), deletions=deletions)
+    if applied:
+        new["llm_applied"] = applied
     data["units"][idx] = new
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     return new
+
+
+def _unit(path: Path, unit_id: int) -> dict[str, Any]:
+    return next(u for u in json.loads(path.read_text(encoding="utf-8"))["units"] if u["unit_id"] == unit_id)
+
+
+def _llm_cycle(path: Path, unit_id: int, cfg: Config, reviewed: bool = False) -> dict[str, Any]:
+    """Level by level: LLM review -> auto-apply its A) conversions -> resume, until the unit completes,
+    the LLM has no (new) conversion, or one pass per level was used. The final halt is always reviewed,
+    so its B/C proposals are available in the UI."""
+    levels = len(json.loads(path.read_text(encoding="utf-8")).get("levels", [])) or 1
+    u = _unit(path, unit_id)
+    for _ in range(levels + 1):
+        if u["status"] != "needs_review":
+            return u
+        if not reviewed:
+            llm_review(path, [unit_id], trigger="rerun")
+        reviewed = False
+        rec = lambda f: u["draft"][f["table"]] if f["record"] is None else u["draft"][f["table"]][f["record"]]  # noqa: E731
+        try:
+            fixes = [f for f in llm_conversions(path, u) if rec(f).get(f["field"]) != f["value"]]
+        except (KeyError, IndexError, TypeError):
+            fixes = []
+        if not fixes:
+            return u  # nothing new to convert: leave for manual review
+        u = _rerun_once(path, unit_id, fixes, cfg, by_llm=True)
+    if u["status"] == "needs_review":
+        llm_review(path, [unit_id], trigger="rerun")
+    return u
+
+
+def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]], cfg: Config | None = None,
+                  deletions: dict[str, list[int]] | None = None, llm: bool = True) -> dict[str, Any]:
+    """Apply manual corrections and/or delete related records, re-run one unit, write it back into the file.
+    If it halts again (and llm_review is on), the LLM A) cycle runs level by level from there."""
+    cfg = cfg or load_config()
+    path = Path(run_path)
+    new = _rerun_once(path, unit_id, fixes, cfg, deletions)
+    if llm and cfg.llm_review and new["status"] == "needs_review":
+        new = _llm_cycle(path, unit_id, cfg)
+    return new
+
+
+def llm_conversions(run_path: Path | str, unit: dict[str, Any]) -> list[dict[str, Any]]:
+    """The LLM's A) conversions for this unit's current attempt, as re-run fixes (stale reviews ignored)."""
+    path = Path(run_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rv_path = path.parent / f"llm_review_{data['run_id']}.json"
+    if not rv_path.exists():
+        return []
+    rv = next((r for r in json.loads(rv_path.read_text(encoding="utf-8"))["units"]
+               if r["unit_id"] == unit["unit_id"]), None)
+    if not rv or rv.get("attempts", 0) != unit.get("attempts", 0):
+        return []
+    return [{"table": c["table"], "record": c.get("record"), "field": c["field"], "value": c["to"]}
+            for c in rv.get("conversions") or [] if c.get("to") not in (None, "")]
+
+
+def apply_llm_conversions(run_path: Path | str, unit_ids: list[int] | None = None,
+                          cfg: Config | None = None) -> dict[int, str]:
+    """For each halted unit with a current review: auto-apply A) conversions and resume, level by level
+    (see _llm_cycle). B) count decisions and C) suggestions are never applied. Returns {unit_id: status}."""
+    cfg = cfg or load_config()
+    path = Path(run_path)
+    ids = [u["unit_id"] for u in json.loads(path.read_text(encoding="utf-8"))["units"]
+           if u["status"] == "needs_review" and (unit_ids is None or u["unit_id"] in unit_ids)]
+    return {i: _llm_cycle(path, i, cfg, reviewed=True)["status"] for i in ids}
 
 
 # --------------------------------------------------------------------------- #
@@ -305,7 +379,31 @@ def run(cfg: Config) -> Path:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.output_dir / f"run_{run_id}.json"
     out.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    if cfg.llm_review and any(u.status == "needs_review" for u in units):
+        llm_review(out)
+        # Automatically, level by level: apply the LLM's A) conversions to each halted draft and resume it, so
+        # every next level's dependency check runs on converted values. B/C are never applied.
+        try:
+            apply_llm_conversions(out, cfg=cfg)
+        except Exception as e:
+            print(f"Auto-apply of LLM conversions failed: {e}", file=sys.stderr)
     return out
+
+
+def llm_review(run_path: Path, unit_ids: list[int] | None = None, trigger: str = "run") -> None:
+    """Hand the run to ../LLMEffects/review.py (separate process: its modules share names with ours).
+    Writes llm_review_<run_id>.json next to the run; a failure never breaks the run."""
+    import subprocess
+    script = Path(__file__).resolve().parent.parent / "LLMEffects" / "review.py"
+    try:
+        cmd = [sys.executable, str(script), str(run_path), f"--trigger={trigger}"]
+        if unit_ids:
+            cmd.append("--units=" + ",".join(map(str, unit_ids)))
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode:
+            print(f"LLM review failed: {r.stderr.strip()[-500:]}", file=sys.stderr)
+    except Exception as e:
+        print(f"LLM review failed: {e}", file=sys.stderr)
 
 
 def main() -> None:

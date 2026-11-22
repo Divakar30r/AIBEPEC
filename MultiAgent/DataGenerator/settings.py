@@ -31,6 +31,7 @@ class Config:
     faker: dict[str, str]
     db_name: str = ""
     count_dump: Path | None = None
+    llm_review: bool = True  # auto-run ../LLMEffects/review.py when units need review
 
     @property
     def parent(self) -> str:
@@ -78,4 +79,5 @@ def load_config(path: str | Path | None = None, per_key: dict[str, tuple[int, in
         faker_locale=raw.get("faker_locale", "en_IN"), faker_default=raw.get("faker_default", "word"),
         faker=raw.get("faker", {}), db_name=db_name,
         count_dump=res(p["count_dump"]) if p.get("count_dump") else None,
+        llm_review=bool(raw.get("llm_review", True)),
     )
