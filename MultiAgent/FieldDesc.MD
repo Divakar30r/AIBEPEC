@@ -1,16 +1,16 @@
 # PolMaster
 
 {
-  "PolicyType": Type of the policy,
+  "PolicyType": Type of the policy. Some types mean more related tables data
   "PolicyNumber": Unique ID for a policy
   "SystemDate": Registration or start date of the policy
-  "EffectiveDate": Effectiveness of the policy,
+  "EffectiveDate": Effectiveness of the policy,mostly close to System date
   "ExpirationDate": Maturity or benefits expiry date,
-  "PolicyStatus": Indicates current state,
+  "PolicyStatus": Indicates current state. RPU indicate Reduced Paid Up
   "Language": Communication language , Hindi or one of the southern state lang
   "SumInsured": Total insured sum of the policy across all stakeholders,
   "ThirdParty": Sourced through a vendor
-  "JurisdictionState": One of the indian states in std two letter conventio
+  "JurisdictionState": Indian states std. 2 letter convention. ROI means rest of India
   "Term": Number of years, followed with suffix 'Y'
   "Frequency": Mode of premium payment
 }
@@ -25,7 +25,7 @@ _Link: PolMaster.PolicyNumber = PolStakes.PolNumber_
   "StakerCodes": [
     {
       "Unique": Multiple stakeholders per policy but one stakeholder one unique role
-      "Additional": Additional roles like Owner, payor
+      "Additional": Additional roles like Owner(OWN), payor(PAY)
     }
   ],
   "StakerContact": {
@@ -33,5 +33,5 @@ _Link: PolMaster.PolicyNumber = PolStakes.PolNumber_
     "mobile": contact number
     "mail": mail id
   },
-  "StakerStatus": active, removed
+  "StakerStatus": active, removed. Atleast one active if policy not expired
 }
