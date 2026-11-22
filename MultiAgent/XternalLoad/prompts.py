@@ -14,7 +14,7 @@ ALL COLUMN NAMES IN THE CSV:
 {column_names}
 
 TASK:
-1. For every target field above (PolMaster.* and PolStakes.*), name the CSV column that best \
+1. For every target field above (written as <Table>.<Field>), name the CSV column that best \
 matches it, or null when no column fits.
 2. List CSV columns that match no target field.
 3. Note data-quality issues visible in the profiles that would block loading (inconsistent \
@@ -23,7 +23,7 @@ category spellings, currency symbols or thousand separators in numbers, mixed fo
 Respond with JSON only, in exactly this shape:
 {{
   "mappings": [
-    {{"target": "PolMaster.PolicyType", "csv_column": "policy_type or null",
+    {{"target": "<Table>.<Field>", "csv_column": "<column name> or null",
       "confidence": "high|medium|low", "reason": "short"}}
   ],
   "unmapped_csv_columns": ["..."],

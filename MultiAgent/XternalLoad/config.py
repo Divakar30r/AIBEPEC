@@ -22,16 +22,28 @@ def _csv_list(name: str, default: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     # ---- input files ------------------------------------------------------
-    csv_path: Path = Path(_env("CSV_PATH", str(HERE.parent.parent / "extPolDetails.csv")))
+    # required: the external file to profile. A relative path is taken relative to this folder
+    # (XternalLoad/), not the shell's current directory.
+    csv_path: str = str((HERE / _env("CSV_PATH", "")).resolve()) if _env("CSV_PATH", "") else ""
     field_desc_path: Path = Path(_env("FIELD_DESC_PATH", str(HERE.parent / "FieldDesc.MD")))
 
     # ---- chunking ---------------------------------------------------------
     row_chunk_size: int = int(_env("ROW_CHUNK_SIZE", "100"))  # rows per chunk (min rows per chunk)
     max_rows: int = int(_env("MAX_ROWS", "1000"))  # rows read from the CSV; 0 = all
     sample_values: int = int(_env("SAMPLE_VALUES", "8"))  # example values / top values per column chunk
-    # Columns whose raw values must never leave the machine: only value *shapes* are described.
+    # Mixed-type handling: a column is mixed when its dominant kind is below 1 - MIX_THRESHOLD;
+    # mixed columns are re-chunked into smaller row blocks for up to MIX_MAX_ROUNDS rounds.
+    mix_threshold: float = float(_env("MIX_THRESHOLD", "0.10"))
+    mix_max_rounds: int = int(_env("MIX_MAX_ROUNDS", "3"))
+    profiler: str = _env("PROFILER", "frictionless").lower()  # frictionless | builtin
+    # Extra columns whose raw values must never leave the machine (emails/phones/masked ids are
+    # detected automatically); only value *shapes* are described.
     redact_columns: tuple[str, ...] = field(
-        default_factory=lambda: _csv_list("REDACT_COLUMNS", "customer_name,aadhaar_masked")
+        default_factory=lambda: _csv_list("REDACT_COLUMNS", "")
+    )
+    # Cell values treated as null (case-insensitive), besides empty cells.
+    null_tokens: tuple[str, ...] = field(
+        default_factory=lambda: _csv_list("NULL_TOKENS", "na,n/a,null,nan,nil,#n/a")
     )
 
     # ---- embeddings (OpenAI) ---------------------------------------------

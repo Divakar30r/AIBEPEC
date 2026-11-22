@@ -19,14 +19,14 @@ OUTPUT_PATH = Path(HERE / "last_mapping.json")
 
 
 def target_fields(text: str) -> list[str]:
-    """Lines like `"PolicyType": Type of the policy` -> one retrieval query each."""
+    """Lines like `"FieldName": description` -> one retrieval query each."""
     return [m.group(0).strip().rstrip(",") for m in re.finditer(r'^\s*"[A-Za-z]+"\s*:.*$', text, re.M)]
 
 
 def main() -> None:
     field_desc = settings.field_desc_path.read_text(encoding="utf-8")
     queries = target_fields(field_desc)
-    source = settings.csv_path.name
+    source = Path(settings.csv_path).name
 
     q_vecs = embedder.embed_texts(queries)
     with store.connect() as conn:
