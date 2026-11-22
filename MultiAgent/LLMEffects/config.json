@@ -1,0 +1,14 @@
+{
+  "mask_fields": [
+    "PolStakes.StakerName",
+    "PolStakes.StakerContact.mobile",
+    "PolStakes.StakerContact.mail"
+  ],
+  "max_rounds": 2,
+  "paths": {
+    "registry_dump": "../DAGRegistry/registry_dump.json",
+    "count_dump": "../DAGRegistry/count_dump.json",
+    "field_desc": "../FieldDesc.MD",
+    "runs_dir": "../DataGenerator/output"
+  }
+}
