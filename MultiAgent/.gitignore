@@ -5,3 +5,4 @@ output/
 LLMEffects/logs/
 .csvLLMEffects/logs/
 *.csv
+DBHandler/sample_rows.json
