@@ -52,6 +52,7 @@ def load_xlsource(cfg: Config, rng: random.Random) -> list[dict[str, Any]]:
     with cfg.csv.open(newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh))
     sample = rng.sample(rows, min(cfg.source_rows, len(rows)))
+    dbf = load_db_formats(cfg)  # DB column type wins over the LLM's db_format (e.g. smallint, not 'number')
     out: list[dict[str, Any]] = []
     for row in sample:
         rec: dict[str, Any] = {}
@@ -59,7 +60,8 @@ def load_xlsource(cfg: Config, rng: random.Random) -> list[dict[str, Any]]:
             raw = row.get(e["csv_column"])
             if raw is None or raw.strip() == "":
                 continue
-            # Keep values in the target's db_format inside the units.
-            rec[e["target"]] = formats.convert(raw.strip(), e.get("db_format"), e.get("csv_format"))
+            # Keep values in the target's DB format inside the units.
+            rec[e["target"]] = formats.convert(raw.strip(), dbf.get(e["target"]) or e.get("db_format"),
+                                               e.get("csv_format"))
         out.append(rec)
     return out

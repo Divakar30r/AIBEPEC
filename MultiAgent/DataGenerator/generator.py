@@ -151,6 +151,7 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
     parent, draft = cfg.parent, unit.draft
     dbf = load_db_formats(cfg)  # target -> DB-type format; every value is stored in it
     source_row: dict[tuple[str, int], dict[str, Any]] = {}  # one XLSource row per record keeps name/age coherent
+    draws: dict[tuple, float] = {}  # Only/Max Possibility: one draw per parent value for the whole unit
 
     def records(table: str) -> list[tuple[int | None, dict[str, Any]]]:
         return [(None, draft[table])] if table == parent else list(enumerate(draft[table]))
@@ -192,7 +193,7 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
                     def opts(rec, table=table, fld=fld):
                         bs = applicable(plan.rules.get((table, fld), ()), {parent: draft[parent], table: rec})
                         return [x for b in bs if b.constraint == "ListStr" for x in b.allowed]
-                    unit.notes += weights.adjust_counts(draft, parent, table, fld, opts, rng)
+                    unit.notes += weights.adjust_counts(draft, parent, table, fld, opts, rng, draws)
             unit.levels_done = lvl + 1
         unit.violations = check_all(registry, cfg, plan, draft, len(plan.levels))  # final check after the last level
         unit.status = "needs_review" if unit.violations else "completed"
@@ -264,10 +265,30 @@ def delete_unit_in_file(run_path: Path | str, unit_id: int) -> None:
     """Delete the parent record, i.e. the whole unit, from a saved run file."""
     path = Path(run_path)
     data = json.loads(path.read_text(encoding="utf-8"))
+    gone = [u for u in data["units"] if u["unit_id"] == unit_id]
     data["units"] = [u for u in data["units"] if u["unit_id"] != unit_id]
     data.setdefault("deleted_units", []).append(unit_id)
+    # keep the removed unit as it was (draft + violations): its count errors become "problem" feedback pairs
+    data.setdefault("removed_units", []).extend(gone)
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     collect_if_done(path)
+
+
+def _record_change(changes: list[dict[str, Any]], new: dict[str, Any]) -> None:
+    """Append an authored change, folding it into the same author's previous change of the same cell:
+    an intermediate value the author overwrote themselves is not tracked (only original -> latest is kept;
+    changing it back to the original drops the entry). Chained on the value, so stale record indices
+    after deletions don't merge unrelated cells."""
+    for i in range(len(changes) - 1, -1, -1):
+        prev = changes[i]
+        if (prev["table"], prev.get("record"), prev["field"]) == (new["table"], new.get("record"), new["field"]) \
+                and str(prev.get("to")) == str(new.get("from")):
+            merged = {**new, "from": prev.get("from")}
+            del changes[i]
+            if str(merged["from"]) != str(merged["to"]):
+                changes.append(merged)
+            return
+    changes.append(new)
 
 
 def _rerun_once(path: Path, unit_id: int, fixes: list[dict[str, Any]], cfg: Config,
@@ -279,10 +300,12 @@ def _rerun_once(path: Path, unit_id: int, fixes: list[dict[str, Any]], cfg: Conf
     applied = list(old.get("llm_applied", []))
     by_user = list(old.get("user_applied", []))
     # remember who changed what (LLM: shown + editable in the UI; both feed LLMfeedback.json once the run is done)
+    dbf = load_db_formats(cfg)
     for f in fixes:
         rec = old["draft"][f["table"]] if f["record"] is None else old["draft"][f["table"]][f["record"]]
-        (applied if by_llm else by_user).append({
-            **{k: f[k] for k in ("table", "record", "field")}, "from": rec.get(f["field"]), "to": f["value"],
+        stored = formats.convert(f["value"], dbf.get(f"{f['table']}.{f['field']}"))  # as rerun_unit stores it
+        _record_change(applied if by_llm else by_user, {
+            **{k: f[k] for k in ("table", "record", "field")}, "from": rec.get(f["field"]), "to": stored,
             "level": old["halted_before_level"], "attempt": int(old.get("attempts", 0)) + 1})
     # snapshot of this halt's count errors (with the parent row as it was) - the "problem" side of count pairs
     halts = list(old.get("halts", []))
@@ -340,6 +363,48 @@ def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]
         new = _llm_cycle(path, unit_id, cfg)
     collect_if_done(path)
     return new
+
+
+def swap_child_sets(run_path: Path | str, assignment: dict[int, int], cfg: Config | None = None) -> dict[int, str]:
+    """Re-key whole related-table sets between HALTED units (no LLM call): {unit_id: donor_unit_id} gives
+    unit_id all child records of donor_unit_id, re-keyed to unit_id's key. Completed units are never touched.
+    Each changed unit resumes from its halted level. Provenance is kept in repair_applied.
+    Returns {unit_id: new status}."""
+    cfg = cfg or load_config()
+    path = Path(run_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {u["unit_id"]: u for u in data["units"]}
+    for uid, donor in assignment.items():
+        for x in (uid, donor):
+            if x not in by_id or by_id[x]["status"] != "needs_review":
+                raise ValueError(f"unit {x} is not a halted unit - only halted units can swap related sets")
+    originals = {x: json.loads(json.dumps(by_id[x]["draft"])) for x in set(assignment) | set(assignment.values())}
+    plan, registry = build_plan(cfg), load_rules()
+    xls = load_xlsource(cfg, random.Random())
+    out: dict[int, str] = {}
+    for uid, donor in assignment.items():
+        if uid == donor:
+            continue
+        old = by_id[uid]
+        draft = json.loads(json.dumps(old["draft"]))
+        moved = {}
+        for child, c in cfg.children.items():
+            kf = c.get("key_field", cfg.key_field)
+            draft[child] = [{**r, kf: old["key"]} for r in originals[donor].get(child, [])]
+            moved[child] = len(draft[child])
+        new = rerun_unit({**old, "draft": draft}, [], cfg, plan, registry, xls)
+        for k, v in old.items():  # keep provenance (llm_applied, user_applied, halts, ...)
+            new.setdefault(k, v)
+        new["repair_applied"] = list(old.get("repair_applied", [])) + [{
+            "from_unit": donor, "from_key": by_id[donor]["key"], "to_unit": uid, "records": moved,
+            "level": old["halted_before_level"], "attempt": new["attempts"]}]
+        new["notes"].append(f"repair (supervisor): related records taken from unit {donor} ({by_id[donor]['key']}), "
+                            f"re-keyed to {old['key']} - no LLM call")
+        data["units"] = [new if u["unit_id"] == uid else u for u in data["units"]]
+        out[uid] = new["status"]
+    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    collect_if_done(path)
+    return out
 
 
 def llm_conversions(run_path: Path | str, unit: dict[str, Any]) -> list[dict[str, Any]]:

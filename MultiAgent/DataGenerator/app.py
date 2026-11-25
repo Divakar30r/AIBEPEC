@@ -21,6 +21,13 @@ import Schemafetcher  # DBHandler (path added by settings)
 import formats
 from source import load_db_formats
 
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # MultiAgent root -> Supervisor package
+import Supervisor.audit, Supervisor.repair, Supervisor.graph  # noqa: E401,E402  (LangGraph multi-agent supervisor)
+for _m in (Supervisor.audit, Supervisor.repair, Supervisor.graph):
+    importlib.reload(_m)
+sv = Supervisor.graph
+
 st.set_page_config(page_title="Draft review", layout="wide")
 try:
     cfg = load_config()
@@ -57,18 +64,30 @@ with st.sidebar:
         problems.append("No related tables found from the database foreign keys")
     for p in problems:
         st.caption(f":red[{p}]")
-    if st.button("Reload schema from database"):
-        Schemafetcher.clear_cache()
+
+    def _new_run(spinner: str) -> None:
+        for k in [k for k in st.session_state if str(k).startswith(("showdel_", "showedit_", "showdelunit_", "dd_"))]:
+            st.session_state.pop(k, None)
+        with st.spinner(spinner):
+            sv.start(units=int(units), seed=int(seed) or None, per_key=per_key)
         st.rerun()
 
     # Runs only on click; disabled until every related table is configured.
     if st.button("Execute", type="primary", disabled=bool(problems),
                  help="Fill in min and max for every related table first" if problems else None):
-        with st.spinner("Generating..."):
-            generator.run(load_config(units=int(units), seed=int(seed) or None, per_key=per_key))
-        st.rerun()
+        _new_run("Supervisor: generate -> repair -> LLM ...")
     files = sorted(Path(cfg.output_dir).glob("run_*.json"), reverse=True)
     choice = st.selectbox("Run file", files, format_func=lambda p: p.stem) if files else None
+    # Once the selected run is finished: one new run with the sidebar settings and the SAVED feedback weights.
+    try:
+        _choice_done = choice is not None and generator.run_done(json.loads(Path(choice).read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        _choice_done = False
+    if _choice_done and st.button("Run again", disabled=bool(problems),
+                                  help=("Fill in min and max for every related table first" if problems else
+                                        "Starts ONE new run with the sidebar settings and the saved LLM feedback "
+                                        "weights (press Save in 'LLM feedback' first); existing runs are untouched.")):
+        _new_run("Running again (new run with the saved weights, supervised)...")
 
 import weights as fb_weights  # noqa: E402
 from streamlit_sortables import sort_items  # noqa: E402
@@ -100,8 +119,15 @@ if _done:
             VAL, CNT = FB["Value-based"], FB["Count-based"]
             weight_col = st.column_config.NumberColumn("Weightage", min_value=-1.0, max_value=1.0, step=0.05,
                                                        format="%.2f", help="-1 never, 0 no preference, +1 always")
-            remove_col = st.column_config.CheckboxColumn("Remove", width="small",
-                                                         help="Tick and Save to delete this pair from the feedback list")
+            v_opt_col = st.column_config.SelectboxColumn("Options", options=["Remove"], width="small",
+                                                         help="Remove + Save deletes this pair from the feedback list")
+            c_opt_col = st.column_config.SelectboxColumn(
+                "Options", options=["Remove", fb_weights.ONLY, fb_weights.MAX], width="medium",
+                help=f"Remove: deleted on Save. '{fb_weights.ONLY}': exactly Count records with that value in ~share "
+                     "of the units with this parent value - share PREDICTED from the value pairs that convert into the "
+                     f"parent value (own Weightage not used). '{fb_weights.MAX}': AT MOST Count (the value is optional) "
+                     "- share = predicted share x this pair's Weightage. The row moves to its section at once; "
+                     "Save to keep it. Clear the cell to switch it off.")
             prio_col = st.column_config.NumberColumn("Priority", min_value=1, step=1, width="small",
                                                      help="Type a position to move the row there (applied on Save)")
             CATS = ["Always (1)", "Never (-1)", "No pref (0)", "Positive (0..1)", "Negative (-1..0)"]
@@ -133,36 +159,92 @@ if _done:
                                                   disabled=[c for c in part.columns if c not in editable]))
                 return pd.concat(out) if out else df
 
+            # Count pairs: one table per Options state, because Streamlit can disable columns but not single rows.
+            C_GROUPS = [  # (Options value, key tag, title, editable columns)
+                (None, "pairs", "Weighted pairs",
+                 {"Options", "Priority", "value", "RelatedFieldValue", "Count", "Weightage"}),
+                (fb_weights.ONLY, "only", f"{fb_weights.ONLY} - exactly Count; share predicted from the value pairs "
+                                          "into the parent value (only Options editable)", {"Options"}),
+                (fb_weights.MAX, "max", f"{fb_weights.MAX} - at most Count; share = predicted share x Weightage "
+                                        "(only Options and Weightage editable)", {"Options", "Weightage"}),
+                ("Remove", "remove", "Marked for removal - deleted on Save (only Options editable, to undo)",
+                 {"Options"}),
+            ]
+
+            def _opt(o) -> str | None:
+                return None if o is None or pd.isna(o) or str(o) == "" else str(o)
+
+            def _cnt_moved(key: str) -> None:
+                """An Options change moves the row to another section: carry every count table's unsaved edits over
+                (fb_counts_stash, cleared on Save) and rebuild the tables."""
+                changed = (st.session_state.get(key) or {}).get("edited_rows") or {}
+                if not any("Options" in c for c in changed.values()):
+                    return
+                stash = st.session_state.setdefault("fb_counts_stash", {})
+                for k in st.session_state.get("fb_counts_keys", []):
+                    pos = st.session_state.get(f"{k}__pos", [])
+                    for i, c in ((st.session_state.get(k) or {}).get("edited_rows") or {}).items():
+                        stash.setdefault(pos[int(i)], {}).update(c)
+                st.session_state["fb_counts_ver"] = st.session_state.get("fb_counts_ver", 0) + 1
+
+            def _count_editor(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+                """The count pairs, one section per Options state; the frame index is the record's file position."""
+                if show:  # weightage filter; hidden rows are kept unchanged on save
+                    df = df[df["Weightage"].map(lambda w: _cat(float(w))).isin(show)]
+                if df.empty:
+                    st.caption("No pairs match the filter.")
+                    return df
+                ver, keys, out = st.session_state.get("fb_counts_ver", 0), [], []
+                grp = [_opt(o) for o in df["Options"]]
+                for opt, tag, title, editable in C_GROUPS:
+                    part = df[[g == opt for g in grp]]
+                    if part.empty:
+                        continue
+                    key = f"fb_counts_{tag}_{ver}_{ftag}"
+                    st.session_state[f"{key}__pos"] = list(part.index)
+                    keys.append(key)
+                    st.caption(f"**{title}** ({len(part)})")
+                    out.append(st.data_editor(part, key=key, hide_index=True, width="stretch",
+                                              height=35 * (len(part) + 1) + 3, column_config=config,
+                                              disabled=[c for c in part.columns if c not in editable],
+                                              on_change=_cnt_moved, args=(key,)))
+                st.session_state["fb_counts_keys"] = keys
+                return pd.concat(out) if out else df
+
             def _seen(r: dict) -> str:
                 """'20261124_205420 (4)' - the last run that produced the pair, and how often it was seen."""
                 return f"{r.get('LastRun') or '-'} ({int(r.get('Seen') or 0)})"
 
             with t_val:
                 vdf = pd.DataFrame({
-                    "Remove": [False] * len(VAL),
+                    "Options": pd.Series([None] * len(VAL), dtype="object"),
                     "Priority": range(1, len(VAL) + 1),
                     "Table / Field / current value": [f"{r['Table']} / {r['Field']} / {r['current_value']}" for r in VAL],
                     "LLM_value": [str(r["LLM_value"]) for r in VAL],
                     "Weightage": [float(r.get("Weightage") or 0) for r in VAL],
                     "Last run (seen)": [_seen(r) for r in VAL]})
-                v_edit = _two_col_editor("values", vdf, {"Remove", "Priority", "LLM_value", "Weightage"}, {
-                    "Remove": remove_col,
+                v_edit = _two_col_editor("values", vdf, {"Options", "Priority", "LLM_value", "Weightage"}, {
+                    "Options": v_opt_col,
                     "Priority": prio_col, "Weightage": weight_col,
                     "LLM_value": st.column_config.TextColumn("LLM_value", help="Editable: set a custom value")})
             with t_cnt:
-                cdf = pd.DataFrame({
-                    "Remove": [False] * len(CNT),
-                    "Priority": range(1, len(CNT) + 1),
-                    "Field / RelatedField": [f"{r['Field']} / {r['RelatedField']}" for r in CNT],
-                    "value": [str(r.get("value")) for r in CNT],
-                    "RelatedFieldValue": [str(r.get("RelatedFieldValue")) for r in CNT],
-                    "Count": [int(r.get("Count") or 0) for r in CNT],
-                    "Weightage": [float(r.get("Weightage") or 0) for r in CNT],
-                    "Note": [r.get("Note") or "" for r in CNT],
-                    "Last run (seen)": [_seen(r) for r in CNT]})
-                c_edit = _two_col_editor("counts", cdf, {"Remove", "Priority", "value", "RelatedFieldValue", "Count",
-                                                               "Weightage"}, {
-                    "Remove": remove_col,
+                c_rows = [{
+                    "Options": fb_weights.option(r),
+                    "Priority": i + 1,
+                    "Field / RelatedField": f"{r['Field']} / {r['RelatedField']}",
+                    "value": str(r.get("value")),
+                    "RelatedFieldValue": str(r.get("RelatedFieldValue")),
+                    "Count": int(r.get("Count") or 0),
+                    "Weightage": float(r.get("Weightage") or 0),
+                    "Note": r.get("Note") or "",
+                    "Last run (seen)": _seen(r)} for i, r in enumerate(CNT)]
+                for pos, ch in st.session_state.get("fb_counts_stash", {}).items():  # unsaved edits of moved rows
+                    if pos < len(c_rows):
+                        c_rows[pos].update(ch)
+                cdf = pd.DataFrame(c_rows, columns=list(c_rows[0]) if c_rows else ["Options", "Priority", "Weightage"])
+                cdf["Options"] = cdf["Options"].astype(object)
+                c_edit = _count_editor(cdf, {
+                    "Options": c_opt_col,
                     "Priority": prio_col, "Weightage": weight_col,
                     "value": st.column_config.TextColumn("value", help="Editable: the parent field's value"),
                     "RelatedFieldValue": st.column_config.TextColumn("RelatedFieldValue",
@@ -179,8 +261,14 @@ if _done:
                     rec, prio = dict(base), float(pos + 1)
                     if pos in edits:
                         r = edits[pos]
-                        if bool(r.get("Remove", False)):
-                            continue  # ticked for removal: dropped from the list on save
+                        opt = r.get("Options")
+                        opt = None if opt is None or pd.isna(opt) or str(opt) == "" else str(opt)
+                        if opt == "Remove":
+                            continue  # chosen for removal: dropped from the list on save
+                        if opt:
+                            rec["Option"] = opt
+                        else:
+                            rec.pop("Option", None)
                         for f in fields:
                             rec[f] = None if pd.isna(r[f]) else r[f]
                         prio = prio if pd.isna(r["Priority"]) else float(r["Priority"])
@@ -217,24 +305,16 @@ if _done:
             with t_cnt:
                 _prioritizer("counts", _merge(CNT, c_edit, ["value", "RelatedFieldValue", "Count", "Weightage"]),
                              lambda r: f"{r['Field']}={r['value']} / {r['RelatedField']}={r['RelatedFieldValue']} "
-                                       f"x{r['Count']}   (w {float(r['Weightage'] or 0):+.2f})")
+                                       f"x{r['Count']}   (" + (fb_weights.ONLY if fb_weights.is_only(r) else
+                                                               (f"{fb_weights.MAX}, " if fb_weights.is_max(r) else "")
+                                                               + f"w {float(r['Weightage'] or 0):+.2f}") + ")")
             st.caption("Priority: earlier pairs are considered first - type a new number in Priority and Save, or drag. "
                        "Value pairs act while a field is filled; count pairs act after that.")
 
-            b1, b3, _ = st.columns([1.2, 1.6, 5.6])
-            if b1.button("Save", type="primary", key="fb_save", help="Saves weights, values, priorities and removals"):
+            if st.button("Save", type="primary", key="fb_save",
+                         help="Saves weights, values, priorities and removals; 'Run again' in the sidebar uses them"):
                 _save()
                 st.toast("LLM feedback saved - the next run uses it")
-                st.rerun()
-            if b3.button("Simulate a round", key="fb_simulate", disabled=bool(problems),
-                         help=("Fill in min and max for every related table first" if problems else
-                               "Saves the weights, then runs ONE new run with the sidebar settings and these weights; "
-                               "existing runs are untouched.")):
-                for k in [k for k in st.session_state if str(k).startswith(("showdel_", "showedit_", "showdelunit_", "dd_"))]:
-                    st.session_state.pop(k, None)
-                _save()
-                with st.spinner("Simulating a round (new run with the saved weights)..."):
-                    generator.run(load_config(units=int(units), seed=int(seed) or None, per_key=per_key))
                 st.rerun()
 
 if choice is None:
@@ -279,6 +359,40 @@ c4.metric("Error", len(by_status("error")))
 with st.expander("Level plan (evaluation order)"):
     for i, lv in enumerate(run["levels"]):
         st.write(f"**Level {i}**: " + ", ".join(lv))
+
+# ---- Supervisor (multi-agent): agent trace + end-of-round audit (read-only) -----------------------------
+_sv = run.get("supervisor") or {}
+_aud = run.get("audit") or {}
+_n_viol = sum(v["violations"] for v in (_aud.get("summary") or {}).values())
+with st.expander(f"Supervisor (multi-agent) - round {_sv.get('round', '-')}, status: {_sv.get('status') or 'not supervised'}"
+                 + (f" - audit: {_n_viol} violation(s)" if _aud else ""), expanded=bool(_aud and _n_viol)):
+    if not _sv:
+        st.caption("This run was not started through the supervisor (use Execute).")
+    else:
+        st.caption("Agents: generate (Agent 1, rules) -> repair (B, swaps related sets between halted units, no LLM) "
+                   "-> llm (Agent 2) -> await_human (Agent 3, UI) -> audit (A, once every unit is completed). "
+                   "The supervisor routes by rules and makes no LLM call.")
+        st.markdown("**Agent trace**")
+        st.dataframe(pd.DataFrame(_sv.get("trace", [])), width="stretch", hide_index=True)
+        st.markdown("**Audit** (end of round - report only, nothing is changed)")
+        if not _aud:
+            st.caption("Not audited yet: the audit runs when every unit of the round is completed.")
+        else:
+            cols = st.columns(len(_aud["summary"]))
+            for col, (author, s) in zip(cols, _aud["summary"].items()):
+                col.metric(f"{author} violations", s["violations"], help=f"{s['checks']} check(s)")
+            st.caption(f"Round {_aud['round']}, audited {_aud['at']}")
+            _df = pd.DataFrame(_aud["findings"])
+            if _df.empty:
+                st.caption("No authored changes in this run.")
+            else:
+                only = st.toggle("Show violations only", value=True, key="audit_only_viol")
+                if only:
+                    _df = _df[_df["verdict"] == "violation"]
+                _df = _df.astype("string")
+                st.dataframe(_df.style.apply(lambda r: ["background-color: #f8b4b4" if r["verdict"] == "violation"
+                                                        else "" for _ in r], axis=1),
+                             width="stretch", hide_index=True)
 
 st.subheader("All units")
 st.dataframe(pd.DataFrame([{
@@ -675,8 +789,11 @@ for u in flagged:
                          help="Pick a value or a record to delete first" if not ready else
                          ("Flagged fields left unchanged keep their current (invalid) value" if pending else None)):
                 payload = [{"table": t, "record": r, "field": f, "value": val} for (t, r, f), val in fixes.items()]
-                with st.spinner("Re-running (and LLM review if it halts again)..."):
-                    new = generator.rerun_in_file(choice, u["unit_id"], payload, cfg, deletions=deletions)
+                with st.spinner("Re-running, then supervisor: repair -> LLM -> (wait | audit) ..."):
+                    new = generator.rerun_in_file(choice, u["unit_id"], payload, cfg, deletions=deletions, llm=False)
+                    sv.resume(choice, trigger="human")  # human feedback done -> next supervised pass
+                new = next((x for x in json.loads(Path(choice).read_text(encoding="utf-8"))["units"]
+                            if x["unit_id"] == u["unit_id"]), new)
                 st.toast(f"Unit {u['unit_id']}: {new['status']}")
                 st.rerun()
 with st.expander("Completed units"):
