@@ -53,6 +53,10 @@ def test_range_yyyymmdd(reg):
     assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 20250502}))  # after range
     assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 20230231}))  # not a real date
     assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": 202001}))    # month only
+    # rules check boundaries, not the format: the same date in other formats passes / fails alike
+    assert reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": "2020-01-15"}))
+    assert reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": "15/01/2020"}))
+    assert not reg.validate_field("PolMaster", "SystemDate", row(m={"SystemDate": "2025-05-02"}))
 
 
 def test_range_c_days(reg):

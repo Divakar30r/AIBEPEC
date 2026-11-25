@@ -24,6 +24,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+import sys as _sys
+
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from format_tokens import DATE_FORMATS  # noqa: E402  (shared format vocabulary)
+
 DEFAULT_RULES_PATH = Path(__file__).resolve().parent.parent / "PolRef.json"
 
 # Closed vocabulary: these keys are domain constraints, every other key is a guard.
@@ -73,18 +78,27 @@ def _to_node(ref: str, default_table: str, tables: frozenset[str] | None = None)
     return default_table, ref
 
 
-def _to_date(v: Any) -> dt.date:
-    """date | datetime | 'YYYY-MM-DD' | YYYYMMDD | YYYYMM (-> first of month)."""
+def _to_date(v: Any, allow_month: bool = True) -> dt.date:
+    """Read a date written in any shared format token (../format_tokens.py): date / datetime objects,
+    YYYY-MM-DD, YYYYMMDD, DD/MM/YYYY, ... ; 6-digit YYYYMM (-> first of month) only if allow_month.
+    Rules use this to check BOUNDARIES - the value's format is never part of the rule."""
     if isinstance(v, dt.datetime):
         return v.date()
     if isinstance(v, dt.date):
         return v
     s = str(v).strip()
     if re.fullmatch(r"\d{6}", s):
+        if not allow_month:
+            raise ValueError(f"month-only value {s!r} where a full date is required")
         return dt.date(int(s[:4]), int(s[4:]), 1)
-    if re.fullmatch(r"\d{8}", s):
-        return dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
-    return dt.date.fromisoformat(s)
+    for pattern in DATE_FORMATS.values():
+        if pattern == "%Y%m":
+            continue
+        try:
+            return dt.datetime.strptime(s, pattern).date()
+        except ValueError:
+            continue
+    return dt.date.fromisoformat(s)  # last resort (other ISO variants); raises ValueError
 
 
 def _shift(d: dt.date, unit: str, n: int) -> dt.date:
@@ -168,9 +182,16 @@ class Registry:
 # --------------------------------------------------------------------------- #
 # Pipeline
 # --------------------------------------------------------------------------- #
+def same(a: Any, b: Any) -> bool:
+    """Value equality used by rules: strings compare case-insensitively ('active' == 'Active')."""
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip().casefold() == b.strip().casefold()
+    return a == b
+
+
 def _guards_ok(guards: tuple[tuple[Node, Any], ...], ctx: Row) -> bool:
     for (t, f), expected in guards:
-        if ctx.get(t, {}).get(f) != expected:
+        if not same(ctx.get(t, {}).get(f), expected):
             return False
     return True
 
@@ -180,16 +201,18 @@ def _compile_check(constraint: str, spec: Any, table: str, tables: frozenset[str
     refs: tuple[Node, ...] = ()
     if constraint == "ListStr":
         allowed = frozenset(spec)
-        dom: Callable[[Row, Any], bool] = lambda ctx, v: v in allowed
+        folded = frozenset(str(x).strip().casefold() for x in spec)  # case-insensitive list match
+        dom: Callable[[Row, Any], bool] = lambda ctx, v: (v in allowed) or (
+            isinstance(v, str) and v.strip().casefold() in folded)
     elif constraint == "RangeInt":
         lo, hi = spec
         dom = lambda ctx, v: _is_int(v) and lo <= int(v) <= hi
-    elif constraint == "Range_YYYYMM":
+    elif constraint == "Range_YYYYMM":  # boundaries in YYYYMM; the value may be in any date format
         lo, hi = spec
-        dom = lambda ctx, v: _is_int(v) and lo <= int(v) <= hi
-    elif constraint == "Range_YYYYMMDD":
+        dom = lambda ctx, v: (m := _month_key(v)) is not None and lo <= m <= hi
+    elif constraint == "Range_YYYYMMDD":  # boundaries in YYYYMMDD; the value may be in any date format
         lo, hi = spec
-        dom = lambda ctx, v: _is_yyyymmdd(v) and lo <= int(v) <= hi
+        dom = lambda ctx, v: (d := _day_key(v)) is not None and lo <= d <= hi
     elif constraint == "Range_C":
         ast = parse_range_c(spec, table, tables)
         refs = (ast.ref,)
@@ -207,16 +230,21 @@ def _is_int(v: Any) -> bool:
         return False
 
 
-def _is_yyyymmdd(v: Any) -> bool:
-    """8-digit value that is a real calendar date (rejects e.g. 20230231)."""
-    s = str(v).strip()
-    if not re.fullmatch(r"\d{8}", s):
-        return False
+def _day_key(v: Any) -> int | None:
+    """Any full date -> YYYYMMDD int for boundary checks; None if not a real date (e.g. 20230231, 202001)."""
     try:
-        dt.date(int(s[:4]), int(s[4:6]), int(s[6:]))
-        return True
-    except ValueError:
-        return False
+        return int(_to_date(v, allow_month=False).strftime("%Y%m%d"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _month_key(v: Any) -> int | None:
+    """Any date or YYYYMM -> YYYYMM int for boundary checks."""
+    try:
+        d = _to_date(v)
+        return d.year * 100 + d.month
+    except (TypeError, ValueError):
+        return None
 
 
 def _range_c_ok(ast: RangeCAst, ctx: Row, value: Any) -> bool:
