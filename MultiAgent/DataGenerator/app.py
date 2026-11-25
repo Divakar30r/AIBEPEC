@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-import dbschema
 import importlib
 
 import count_rules
@@ -18,11 +17,14 @@ import schema
 for _m in (count_rules, schema, generator):
     importlib.reload(_m)
 from settings import load_config
+import Schemafetcher  # DBHandler (path added by settings)
+import formats
+from source import load_db_formats
 
 st.set_page_config(page_title="Draft review", layout="wide")
 try:
     cfg = load_config()
-except (dbschema.SchemaError, ValueError) as e:
+except (Schemafetcher.SchemaError, ValueError) as e:
     st.error(f"Cannot derive the table relations from the database foreign keys: {e}")
     st.stop()
 
@@ -56,7 +58,7 @@ with st.sidebar:
     for p in problems:
         st.caption(f":red[{p}]")
     if st.button("Reload schema from database"):
-        dbschema.clear_cache()
+        Schemafetcher.clear_cache()
         st.rerun()
 
     # Runs only on click; disabled until every related table is configured.
@@ -67,6 +69,173 @@ with st.sidebar:
         st.rerun()
     files = sorted(Path(cfg.output_dir).glob("run_*.json"), reverse=True)
     choice = st.selectbox("Run file", files, format_func=lambda p: p.stem) if files else None
+
+import weights as fb_weights  # noqa: E402
+from streamlit_sortables import sort_items  # noqa: E402
+
+importlib.reload(fb_weights)
+
+# --------------------------------------------------------------------------- LLM feedback weights (next run)
+# Shown only once the selected run is FINISHED (every unit through, after your corrections) - its outcome is
+# then merged into the feedback list, which you weigh before simulating the next round.
+_sel = json.loads(Path(choice).read_text(encoding="utf-8")) if choice is not None else None
+_done = _sel is not None and generator.run_done(_sel)
+if _done and not _sel.get("feedback_collected"):
+    generator.collect_if_done(choice)
+if _sel is not None and not _done:
+    _left = sum(1 for u in _sel["units"] if u["status"] != "completed")
+    st.caption(f"LLM feedback appears once every unit of this run has gone through ({_left} still to correct "
+               "or delete); the run's final outcome is then added to the list for the next round.")
+if _done:
+    with st.expander("LLM feedback - weigh the LLM's pairs for the next run", expanded=False):
+        st.caption("Weightage: **-1** never · **0** no preference · **+1** always (fractions = approximate share). "
+                   "Collected from every run's A) conversions and B) count decisions into LLMEffects/LLMfeedback.json; "
+                   "used only by NEW runs, never on existing records. Pairs at -1/+1 are never overwritten by new runs.")
+        try:
+            FB = fb_weights.load_feedback()
+        except Exception as e:  # unreadable file: show why, keep the page usable
+            FB = None
+            st.error(f"LLMfeedback.json is not readable: {e}")
+        if FB is not None:
+            VAL, CNT = FB["Value-based"], FB["Count-based"]
+            weight_col = st.column_config.NumberColumn("Weightage", min_value=-1.0, max_value=1.0, step=0.05,
+                                                       format="%.2f", help="-1 never, 0 no preference, +1 always")
+            remove_col = st.column_config.CheckboxColumn("Remove", width="small",
+                                                         help="Tick and Save to delete this pair from the feedback list")
+            prio_col = st.column_config.NumberColumn("Priority", min_value=1, step=1, width="small",
+                                                     help="Type a position to move the row there (applied on Save)")
+            CATS = ["Always (1)", "Never (-1)", "No pref (0)", "Positive (0..1)", "Negative (-1..0)"]
+
+            def _cat(w: float) -> str:
+                return ("Always (1)" if w >= 1 else "Never (-1)" if w <= -1 else "No pref (0)" if w == 0
+                        else "Positive (0..1)" if w > 0 else "Negative (-1..0)")
+            show = st.pills("Show weightage", CATS, selection_mode="multi", key="fb_filter",
+                            help="Nothing selected = show all. Save before changing the filter (unsaved edits reset).")
+            ftag = "-".join(str(i) for i in sorted(CATS.index(c) for c in show)) or "all"
+            t_val, t_cnt = st.tabs([f"Value-based ({len(VAL)})", f"Count-based ({len(CNT)})"])
+
+            def _two_col_editor(kind: str, df: pd.DataFrame, editable: set[str], config: dict) -> pd.DataFrame:
+                """One table sized to its rows. The frame index is the record's position in the file, so edits map back
+                to the full records."""
+                if show:  # weightage filter; hidden rows are kept unchanged on save
+                    df = df[df["Weightage"].map(lambda w: _cat(float(w))).isin(show)]
+                if df.empty:
+                    st.caption("No pairs match the filter.")
+                    return df
+                parts = [df]
+                out = []
+                for i, (col, part) in enumerate(zip(st.columns(len(parts)), parts)):
+                    if part.empty:
+                        continue
+                    with col:
+                        out.append(st.data_editor(part, key=f"fb_{kind}_{i}_{ftag}", hide_index=True, width="stretch",
+                                                  height=35 * (len(part) + 1) + 3, column_config=config,
+                                                  disabled=[c for c in part.columns if c not in editable]))
+                return pd.concat(out) if out else df
+
+            def _seen(r: dict) -> str:
+                """'20261124_205420 (4)' - the last run that produced the pair, and how often it was seen."""
+                return f"{r.get('LastRun') or '-'} ({int(r.get('Seen') or 0)})"
+
+            with t_val:
+                vdf = pd.DataFrame({
+                    "Remove": [False] * len(VAL),
+                    "Priority": range(1, len(VAL) + 1),
+                    "Table / Field / current value": [f"{r['Table']} / {r['Field']} / {r['current_value']}" for r in VAL],
+                    "LLM_value": [str(r["LLM_value"]) for r in VAL],
+                    "Weightage": [float(r.get("Weightage") or 0) for r in VAL],
+                    "Last run (seen)": [_seen(r) for r in VAL]})
+                v_edit = _two_col_editor("values", vdf, {"Remove", "Priority", "LLM_value", "Weightage"}, {
+                    "Remove": remove_col,
+                    "Priority": prio_col, "Weightage": weight_col,
+                    "LLM_value": st.column_config.TextColumn("LLM_value", help="Editable: set a custom value")})
+            with t_cnt:
+                cdf = pd.DataFrame({
+                    "Remove": [False] * len(CNT),
+                    "Priority": range(1, len(CNT) + 1),
+                    "Field / RelatedField": [f"{r['Field']} / {r['RelatedField']}" for r in CNT],
+                    "value": [str(r.get("value")) for r in CNT],
+                    "RelatedFieldValue": [str(r.get("RelatedFieldValue")) for r in CNT],
+                    "Count": [int(r.get("Count") or 0) for r in CNT],
+                    "Weightage": [float(r.get("Weightage") or 0) for r in CNT],
+                    "Note": [r.get("Note") or "" for r in CNT],
+                    "Last run (seen)": [_seen(r) for r in CNT]})
+                c_edit = _two_col_editor("counts", cdf, {"Remove", "Priority", "value", "RelatedFieldValue", "Count",
+                                                               "Weightage"}, {
+                    "Remove": remove_col,
+                    "Priority": prio_col, "Weightage": weight_col,
+                    "value": st.column_config.TextColumn("value", help="Editable: the parent field's value"),
+                    "RelatedFieldValue": st.column_config.TextColumn("RelatedFieldValue",
+                                                                     help="Editable: the related field's value"),
+                    "Count": st.column_config.NumberColumn("Count", min_value=0, step=1,
+                                                           help="Number of related records with that value")})
+
+            def _merge(orig: list[dict], edited: pd.DataFrame, fields: list[str]) -> list[dict]:
+                """Edited cells back onto ALL records (rows hidden by the filter stay as they are), ordered by Priority
+                (a moved row goes before a tie)."""
+                edits = {pos: r for pos, r in edited.iterrows()}
+                rows = []
+                for pos, base in enumerate(orig):
+                    rec, prio = dict(base), float(pos + 1)
+                    if pos in edits:
+                        r = edits[pos]
+                        if bool(r.get("Remove", False)):
+                            continue  # ticked for removal: dropped from the list on save
+                        for f in fields:
+                            rec[f] = None if pd.isna(r[f]) else r[f]
+                        prio = prio if pd.isna(r["Priority"]) else float(r["Priority"])
+                    rows.append((prio, 0 if prio != pos + 1 else 1, pos, rec))
+                return [rec for *_, rec in sorted(rows, key=lambda x: x[:3])]
+
+            def _save(values: list[dict] | None = None, counts: list[dict] | None = None) -> None:
+                vals = values if values is not None else _merge(VAL, v_edit, ["LLM_value", "Weightage"])
+                cnts = counts if counts is not None else _merge(CNT, c_edit, ["value", "RelatedFieldValue", "Count",
+                                                                              "Weightage"])
+                for r in vals + cnts:
+                    r["Weightage"] = float(r.get("Weightage") or 0)
+                for r in cnts:
+                    r["Count"] = int(r.get("Count") or 0)
+                fb_weights.save_feedback({"Value-based": vals, "Count-based": cnts})
+                for k in [k for k in st.session_state if str(k).startswith(("fb_values_", "fb_counts_"))]:
+                    st.session_state.pop(k, None)  # edits are row-indexed: restart the editors on the saved order
+
+            def _prioritizer(kind: str, rows: list[dict], label) -> None:
+                """Optional drag list; dropping a row saves the new order right away."""
+                if not rows or not st.toggle("Prioritize by dragging", key=f"tog_{kind}"):
+                    return
+                labels = [f"{i + 1}. {label(r)}" for i, r in enumerate(rows)]
+                new = sort_items(labels, direction="vertical", key=f"sort_{kind}_{abs(hash(tuple(labels)))}")
+                if new != labels:
+                    ordered = [rows[labels.index(x)] for x in new]
+                    _save(**({"values": ordered} if kind == "values" else {"counts": ordered}))
+                    st.rerun()
+
+            with t_val:
+                _prioritizer("values", _merge(VAL, v_edit, ["LLM_value", "Weightage"]),
+                             lambda r: f"{r['Table']} / {r['Field']} / {r['current_value']} -> {r['LLM_value']}"
+                                       f"   (w {float(r['Weightage'] or 0):+.2f})")
+            with t_cnt:
+                _prioritizer("counts", _merge(CNT, c_edit, ["value", "RelatedFieldValue", "Count", "Weightage"]),
+                             lambda r: f"{r['Field']}={r['value']} / {r['RelatedField']}={r['RelatedFieldValue']} "
+                                       f"x{r['Count']}   (w {float(r['Weightage'] or 0):+.2f})")
+            st.caption("Priority: earlier pairs are considered first - type a new number in Priority and Save, or drag. "
+                       "Value pairs act while a field is filled; count pairs act after that.")
+
+            b1, b3, _ = st.columns([1.2, 1.6, 5.6])
+            if b1.button("Save", type="primary", key="fb_save", help="Saves weights, values, priorities and removals"):
+                _save()
+                st.toast("LLM feedback saved - the next run uses it")
+                st.rerun()
+            if b3.button("Simulate a round", key="fb_simulate", disabled=bool(problems),
+                         help=("Fill in min and max for every related table first" if problems else
+                               "Saves the weights, then runs ONE new run with the sidebar settings and these weights; "
+                               "existing runs are untouched.")):
+                for k in [k for k in st.session_state if str(k).startswith(("showdel_", "showedit_", "showdelunit_", "dd_"))]:
+                    st.session_state.pop(k, None)
+                _save()
+                with st.spinner("Simulating a round (new run with the saved weights)..."):
+                    generator.run(load_config(units=int(units), seed=int(seed) or None, per_key=per_key))
+                st.rerun()
 
 if choice is None:
     st.info("No runs yet. Fill in the related tables and press 'Execute' in the sidebar, or run `python generator.py`.")
@@ -177,7 +346,7 @@ def allowed_for(table: str, fld: str, ctx: dict) -> tuple[str, object, bool] | N
     if not rule or not rule["branches"]:
         return None
     ok = [b for b in rule["branches"]
-          if all(ctx.get(_ref(g)[0], {}).get(_ref(g)[1]) == v for g, v in b["guards"].items())]
+          if all(generator.same(ctx.get(_ref(g)[0], {}).get(_ref(g)[1]), v) for g, v in b["guards"].items())]
     use = ok or rule["branches"]
     kind = use[0]["constraint"]
     use = [b for b in use if b["constraint"] == kind]
@@ -201,6 +370,80 @@ def cell_value(u: dict, c: dict):
         return _MISSING
 
 
+DBF = load_db_formats(cfg)  # target -> db_format from mapping.json
+
+
+def date_widget(label: str, key: str, proposed, fmt: str, lo=None, hi=None, help_: str | None = None):
+    """Calendar picker; the picked date is returned in the field's format (e.g. YYYY-MM-DD / YYYYMMDD)."""
+    d = formats.parse_date(proposed) if proposed not in (None, "") else None
+    picked = st.date_input(label, value=d.date() if d else None, min_value=lo, max_value=hi, key=key,
+                           format="YYYY-MM-DD", help=help_ or f"Stored as {fmt}")
+    return picked.strftime(formats.DATE_FORMATS[fmt]) if picked else None
+
+
+@st.dialog("Add to LLM feedback", width="large")
+def feedback_dialog(u: dict, v: dict, dd_key: str) -> None:
+    """Confirm (and correct) a unit's error as a value or count pair before it goes into LLMfeedback.json."""
+    rv = llm_for(u) or {}
+    t, f = v["table"], v["field"]
+    if v.get("kind", "field") == "field":
+        st.markdown("**Value-based pair**")
+        c1, c2, c3 = st.columns(3)
+        c1.text_input("Table", t, disabled=True)
+        c2.text_input("Field", f, disabled=True)
+        c3.text_input("current_value", str(v["value"]), disabled=True)
+        proposed = llm_values(u).get((t, v["record"], f))
+        to = st.text_input("LLM_value", "" if proposed is None else str(proposed),
+                           help="Prefilled from the LLM's A) proposal when there is one - change it if it's wrong")
+        w = st.slider("Weightage", -1.0, 1.0, 1.0, 0.05, help="-1 never, 0 no preference, +1 always")
+        cur = v["value"]
+        row = {"Table": t, "Field": f, "Type": "number" if isinstance(cur, (int, float)) and not isinstance(cur, bool)
+               else "text", "current_value": cur, "LLM_value": to, "Weightage": w, "Seen": 0, "Note": "added from UI"}
+        section, ok = "Value-based", bool(to.strip())
+    else:
+        st.markdown("**Count-based pair**")
+        prow = u["draft"][cfg.parent]
+        options = [f"{cfg.parent}.{k}" for k in prow if k != cfg.key_field]
+        related = f"{t}.{f}"
+        hint = next((c.get("parent_field") for c in rv.get("count_decisions") or []
+                     if c.get("count_field") == related and c.get("parent_field") in options), None)
+        c1, c2 = st.columns(2)
+        pf = c1.selectbox("Field (parent)", options, index=options.index(hint) if hint else None,
+                          placeholder="Which parent field does this count depend on?",
+                          help="Prefilled from the LLM's B) decision when there is one")
+        pval = c2.text_input("value", "" if pf is None else str(prow.get(pf.split(".", 1)[1], "")))
+        c3, c4, c5 = st.columns(3)
+        c3.text_input("RelatedField", related, disabled=True)
+        rfv = c4.text_input("RelatedFieldValue", str(v["value"]))
+        cnt = c5.number_input("Count", min_value=0, value=int(v.get("count", 0)), step=1)
+        w = st.slider("Weightage", -1.0, 1.0, -1.0, 0.05, help="-1 never, 0 no preference, +1 always")
+        row = {"RelatedTable": t, "RelatedField": related, "RelatedFieldValue": rfv, "Field": pf, "value": pval,
+               "Count": int(cnt), "Weightage": w, "Note": "added from UI", "Seen": 0}
+        section, ok = "Count-based", bool(pf and rfv.strip())
+    never = w <= -1
+    if never:
+        st.warning(f"Never (-1): on Confirm, unit {u['unit_id']} ({u['key']}) is REMOVED from this run; its data "
+                   "is kept as JSON with this pair in LLMfeedback.json.")
+    st.caption("Added at the bottom of the list (lowest priority) - move it up in the LLM feedback section. "
+               "Used only by NEW runs.")
+    b1, b2, _ = st.columns([1.4, 1, 3])
+    if b1.button("Confirm & remove unit" if never else "Confirm", type="primary", disabled=not ok):
+        meta = None
+        if never:  # keep the removed unit's data with the pair, then drop the unit from the run
+            meta = {"run_id": run["run_id"], "unit_id": u["unit_id"], "key": u["key"], "status": u["status"],
+                    "halted_before_level": u["halted_before_level"], "attempts": u.get("attempts", 0),
+                    "violations": u["violations"], "draft": u["draft"], "removed_at": pd.Timestamp.now().isoformat()}
+        fb_weights.add_pair(section, row, meta)  # an existing identical pair is updated in place
+        if never:
+            generator.delete_unit_in_file(choice, u["unit_id"])
+        st.session_state.pop(dd_key, None)
+        st.toast(f"Added to LLM feedback ({section})" + (f"; unit {u['unit_id']} removed" if never else ""))
+        st.rerun()
+    if b2.button("Cancel"):
+        st.session_state.pop(dd_key, None)
+        st.rerun()
+
+
 def correction_widget(u: dict, table: str, rec: int | None, fld: str, proposed=None, short: bool = False):
     row = u["draft"][table] if rec is None else u["draft"][table][rec]
     ctx = {cfg.parent: u["draft"][cfg.parent], table: row}
@@ -210,7 +453,10 @@ def correction_widget(u: dict, table: str, rec: int | None, fld: str, proposed=N
     if proposed is not None:
         label += " (LLM)"
     found = allowed_for(table, fld, ctx)
+    db_fmt = formats.norm(DBF.get(f"{table}.{fld}"))
     if found is None:
+        if formats.is_date_format(db_fmt):
+            return date_widget(label, key, proposed, db_fmt, help_=f"No rule; stored as {db_fmt} (db_format)")
         return st.text_input(label, value="" if proposed is None else str(proposed), key=key, placeholder=hint, help="No rule in registry_dump.json - free text")
     kind, spec, scoped = found
     # Override: type any value, bypassing the rule-limited dropdown / range (re-validated on re-run).
@@ -221,6 +467,14 @@ def correction_widget(u: dict, table: str, rec: int | None, fld: str, proposed=N
         if kind in ("RangeInt", "Range_YYYYMM", "Range_YYYYMMDD") and raw.strip().lstrip("-").isdigit():
             return int(raw)
         return raw
+    if kind in ("Range_YYYYMMDD", "Range_YYYYMM"):  # rule = calendar bounds; value stored in the DB type
+        pat = "YYYYMMDD" if kind == "Range_YYYYMMDD" else "YYYYMM"
+        lo, hi = (formats.parse_date(str(x), pat) for x in spec)
+        fmt = db_fmt if formats.is_date_format(db_fmt) else "YYYY-MM-DD"
+        return date_widget(label, key, proposed, fmt, lo.date() if lo else None, hi.date() if hi else None,
+                           help_=f"Allowed {spec[0]} .. {spec[1]} (bounds only); stored as {fmt}")
+    if kind == "Range_C" and formats.is_date_format(db_fmt):
+        return date_widget(label, key, proposed, db_fmt, help_=f"Rule: {spec}; stored as {db_fmt}")
     if kind == "ListStr":
         help_ = None if scoped else "No rule branch matches the current values of the fields it depends on - showing all options"
         idx = spec.index(proposed) if proposed in spec else None
@@ -252,7 +506,7 @@ for u in flagged:
 
         # ---- header: summary left, action buttons top right
         related = [ch for ch in cfg.children if u["status"] == "needs_review" and u["draft"].get(ch)]
-        head = st.columns([5, 2, 2, 1.4] if related else [9, 1.4])
+        head = st.columns([4, 2, 2, 2, 1.4] if related else [7, 2, 1.4])
         head[0].markdown(f"**Unit {u['unit_id']} - {u['key']}** · {u['status']} ({stage})"
                          + (f" · re-run attempts: {u['attempts']}" if u.get("attempts") else ""))
         if related:
@@ -268,6 +522,16 @@ for u in flagged:
                     st.session_state[f"{kind}_{pick}_{sfx}"] = True
                     st.session_state.pop(f"dd_{kind}_{sfx}", None)
                     st.rerun()
+        # Add one of this unit's errors to the LLM feedback list (confirmed in a popup first).
+        errs = {f"{'count' if v.get('kind') == 'count' else 'value'}: {v['table']}.{v['field']}"
+                + (f"[{v['record']}]" if v.get("record") is not None else "") + f" = {v['value']!r}": v
+                for v in u["violations"]}
+        fb_key = f"dd_fb_{sfx}"
+        fb_pick = head[-2].selectbox("Add error to LLM feedback", list(errs), index=None,
+                                     placeholder="Add error to LLM feedback", label_visibility="collapsed",
+                                     key=fb_key, disabled=not errs)
+        if fb_pick:
+            feedback_dialog(u, errs[fb_pick], fb_key)
         uflag = f"showdelunit_{sfx}"
         if head[-1].button("Remove unit", key=f"btn_{uflag}", width="stretch"):
             st.session_state[uflag] = True

@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import dbschema
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "DBHandler"))
+import Schemafetcher  # noqa: E402  (DBHandler: the only DB client)
 
 HERE = Path(__file__).resolve().parent
 
@@ -56,9 +59,8 @@ def load_config(path: str | Path | None = None, per_key: dict[str, tuple[int, in
     from schema import parse_field_desc  # lazy: schema imports this module
     field_desc = res(p["field_desc"])
     fields = parse_field_desc(field_desc.read_text(encoding="utf-8"))
-    db = raw["database"]
-    db_name = os.getenv("DATAGEN_PG_DB", db["name"])
-    rel = dbschema.relations(db_name, db.get("schema", "public"), fields)
+    rel = Schemafetcher.relations(fields)  # data DB settings: DBHandler/.env (DATADB_*)
+    db_name = rel.db_name
 
     defaults = raw.get("per_key", {})
     tables: dict[str, dict[str, Any]] = {rel.parent: {"role": "parent"}}

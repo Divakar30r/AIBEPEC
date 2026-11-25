@@ -27,10 +27,12 @@ from faker import Faker
 from count_rules import check_counts
 from schema import Branch, Node, Plan, build_plan
 from settings import Config, load_config
-from source import load_xlsource
+import formats
+import weights as fb_weights
+from source import load_db_formats, load_xlsource
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "DAGRegistry"))
-from load_rules import _shift, _to_date, load_rules, parse_range_c  # noqa: E402  (authoritative validator)
+from load_rules import _shift, _to_date, load_rules, parse_range_c, same  # noqa: E402  (authoritative validator)
 
 Draft = dict[str, Any]  # {parent: {..}, child: [{..}, ..]}
 
@@ -62,7 +64,7 @@ def faker_value(spec: str, fake: Faker, rng: random.Random) -> Any:
 
 
 def applicable(branches: tuple[Branch, ...], ctx: dict[str, dict[str, Any]]) -> list[Branch]:
-    return [b for b in branches if all(ctx.get(t, {}).get(f) == v for (t, f), v in b.guards)]
+    return [b for b in branches if all(same(ctx.get(t, {}).get(f), v) for (t, f), v in b.guards)]
 
 
 def value_from_branch(b: Branch, ctx: dict[str, dict[str, Any]], table: str, rng: random.Random) -> Any:
@@ -144,9 +146,10 @@ def new_key(rng: random.Random, cfg: Config, used: set[str]) -> str:
 
 
 def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlsource: list[dict[str, Any]],
-             rng: random.Random, fake: Faker) -> Unit:
+             rng: random.Random, fake: Faker, weights: "fb_weights.Weights | None" = None) -> Unit:
     """Validate-then-fill each level from start_lvl; halts the unit on the first violation."""
     parent, draft = cfg.parent, unit.draft
+    dbf = load_db_formats(cfg)  # target -> DB-type format; every value is stored in it
     source_row: dict[tuple[str, int], dict[str, Any]] = {}  # one XLSource row per record keeps name/age coherent
 
     def records(table: str) -> list[tuple[int | None, dict[str, Any]]]:
@@ -167,14 +170,29 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
                     src = source_row.setdefault((table, idx or 0), rng.choice(xlsource) if xlsource else {})
                     if target in src:                                               # B) CSV
                         rec[fld] = src[target]
+                        if weights:  # user-weighted LLM value pairs from earlier runs (no LLM call)
+                            rec[fld], note = weights.remap(table, fld, rec[fld], rng)
+                            if note:
+                                unit.notes.append(note)
                     elif (table, fld) in plan.rules:                                # C) rule
                         options = applicable(plan.rules[(table, fld)], ctx)
                         if not options:
                             unit.notes.append(f"{target}: no rule branch applies to current values - left blank")
                             continue
-                        rec[fld] = value_from_branch(rng.choice(options), ctx, table, rng)
+                        rec[fld] = formats.convert(value_from_branch(rng.choice(options), ctx, table, rng),
+                                                   dbf.get(target))  # rules give bounds; stored in the DB type
                     else:                                                           # D) Faker
-                        rec[fld] = faker_value(cfg.faker.get(target, cfg.faker_default), fake, rng)
+                        rec[fld] = formats.convert(faker_value(cfg.faker.get(target, cfg.faker_default), fake, rng),
+                                                   dbf.get(target))
+            if weights:  # user-weighted LLM count pairs: steer how many related records carry each value
+                for table, fld in nodes:
+                    if table == parent:
+                        continue
+
+                    def opts(rec, table=table, fld=fld):
+                        bs = applicable(plan.rules.get((table, fld), ()), {parent: draft[parent], table: rec})
+                        return [x for b in bs if b.constraint == "ListStr" for x in b.allowed]
+                    unit.notes += weights.adjust_counts(draft, parent, table, fld, opts, rng)
             unit.levels_done = lvl + 1
         unit.violations = check_all(registry, cfg, plan, draft, len(plan.levels))  # final check after the last level
         unit.status = "needs_review" if unit.violations else "completed"
@@ -194,14 +212,14 @@ def _rngs(cfg: Config, seed: int | None, unit_id: int, attempt: int = 0) -> tupl
 
 
 def run_unit(unit_id: int, key: str, cfg: Config, plan: Plan, registry, xlsource: list[dict[str, Any]],
-             seed: int | None) -> Unit:
+             seed: int | None, weights: "fb_weights.Weights | None" = None) -> Unit:
     rng, fake = _rngs(cfg, seed, unit_id)
     # A) primary key on every record of the unit; record counts per child table.
     draft: Draft = {cfg.parent: {cfg.key_field: key}}
     for child, c in cfg.children.items():
         n = rng.randint(c["min_per_key"], c["max_per_key"])
         draft[child] = [{c.get("key_field", cfg.key_field): key} for _ in range(n)]
-    return _advance(Unit(unit_id, key, draft), 0, cfg, plan, registry, xlsource, rng, fake)
+    return _advance(Unit(unit_id, key, draft), 0, cfg, plan, registry, xlsource, rng, fake, weights)
 
 
 def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan: Plan, registry,
@@ -215,9 +233,10 @@ def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan
     if u["status"] != "needs_review" or u["halted_before_level"] is None:
         raise ValueError(f"unit {u['unit_id']} is not halted for review")
     draft = json.loads(json.dumps(u["draft"]))  # deep copy
+    dbf = load_db_formats(cfg)  # keyed-in and LLM-converted values are stored in the target's db_format
     for f in fixes:  # values first: record indices refer to the draft as shown in the UI
         rec = draft[f["table"]] if f["record"] is None else draft[f["table"]][f["record"]]
-        rec[f["field"]] = f["value"]
+        rec[f["field"]] = formats.convert(f["value"], dbf.get(f"{f['table']}.{f['field']}"))
     removed = []
     for table, idxs in (deletions or {}).items():
         if table == cfg.parent:
@@ -248,6 +267,7 @@ def delete_unit_in_file(run_path: Path | str, unit_id: int) -> None:
     data["units"] = [u for u in data["units"] if u["unit_id"] != unit_id]
     data.setdefault("deleted_units", []).append(unit_id)
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    collect_if_done(path)
 
 
 def _rerun_once(path: Path, unit_id: int, fixes: list[dict[str, Any]], cfg: Config,
@@ -257,16 +277,24 @@ def _rerun_once(path: Path, unit_id: int, fixes: list[dict[str, Any]], cfg: Conf
     idx = next(i for i, u in enumerate(data["units"]) if u["unit_id"] == unit_id)
     old = data["units"][idx]
     applied = list(old.get("llm_applied", []))
-    if by_llm:  # remember what the LLM changed (shown + kept editable in the UI)
-        for f in fixes:
-            rec = old["draft"][f["table"]] if f["record"] is None else old["draft"][f["table"]][f["record"]]
-            applied.append({**{k: f[k] for k in ("table", "record", "field")}, "from": rec.get(f["field"]),
-                            "to": f["value"], "level": old["halted_before_level"],
-                            "attempt": int(old.get("attempts", 0)) + 1})
+    by_user = list(old.get("user_applied", []))
+    # remember who changed what (LLM: shown + editable in the UI; both feed LLMfeedback.json once the run is done)
+    for f in fixes:
+        rec = old["draft"][f["table"]] if f["record"] is None else old["draft"][f["table"]][f["record"]]
+        (applied if by_llm else by_user).append({
+            **{k: f[k] for k in ("table", "record", "field")}, "from": rec.get(f["field"]), "to": f["value"],
+            "level": old["halted_before_level"], "attempt": int(old.get("attempts", 0)) + 1})
+    # snapshot of this halt's count errors (with the parent row as it was) - the "problem" side of count pairs
+    halts = list(old.get("halts", []))
+    count_v = [v for v in old.get("violations", []) if v.get("kind") == "count"]
+    if count_v:
+        halts.append({"attempt": int(old.get("attempts", 0)), "level": old["halted_before_level"],
+                      "parent": dict(old["draft"][cfg.parent]), "count_violations": count_v})
     plan, registry = build_plan(cfg), load_rules()
     new = rerun_unit(old, fixes, cfg, plan, registry, load_xlsource(cfg, random.Random()), deletions=deletions)
-    if applied:
-        new["llm_applied"] = applied
+    for k, v in (("llm_applied", applied), ("user_applied", by_user), ("halts", halts)):
+        if v:
+            new[k] = v
     data["units"][idx] = new
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
     return new
@@ -310,6 +338,7 @@ def rerun_in_file(run_path: Path | str, unit_id: int, fixes: list[dict[str, Any]
     new = _rerun_once(path, unit_id, fixes, cfg, deletions)
     if llm and cfg.llm_review and new["status"] == "needs_review":
         new = _llm_cycle(path, unit_id, cfg)
+    collect_if_done(path)
     return new
 
 
@@ -336,7 +365,9 @@ def apply_llm_conversions(run_path: Path | str, unit_ids: list[int] | None = Non
     path = Path(run_path)
     ids = [u["unit_id"] for u in json.loads(path.read_text(encoding="utf-8"))["units"]
            if u["status"] == "needs_review" and (unit_ids is None or u["unit_id"] in unit_ids)]
-    return {i: _llm_cycle(path, i, cfg, reviewed=True)["status"] for i in ids}
+    out = {i: _llm_cycle(path, i, cfg, reviewed=True)["status"] for i in ids}
+    collect_if_done(path)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -360,9 +391,14 @@ def run(cfg: Config) -> Path:
     xlsource = load_xlsource(cfg, rng)
     used: set[str] = set()
     keys = [new_key(rng, cfg, used) for _ in range(cfg.units)]
+    try:  # weights the user set on earlier runs' LLM output; only NEW runs use them
+        weights = fb_weights.load_weights()
+    except Exception as e:
+        weights = None
+        warnings.append(f"LLM feedback weights not loaded: {e}")
 
     with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
-        futures = [pool.submit(run_unit, i, k, cfg, plan, registry, xlsource, cfg.seed) for i, k in enumerate(keys)]
+        futures = [pool.submit(run_unit, i, k, cfg, plan, registry, xlsource, cfg.seed, weights) for i, k in enumerate(keys)]
         units = [f.result() for f in futures]
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -387,12 +423,44 @@ def run(cfg: Config) -> Path:
             apply_llm_conversions(out, cfg=cfg)
         except Exception as e:
             print(f"Auto-apply of LLM conversions failed: {e}", file=sys.stderr)
+            _add_warning(out, f"Auto-apply of LLM conversions failed: {e}")
+    collect_if_done(out)
     return out
 
 
-def llm_review(run_path: Path, unit_ids: list[int] | None = None, trigger: str = "run") -> None:
+def run_done(data: dict[str, Any]) -> bool:
+    """Every remaining unit went through (completed); deleted units no longer count."""
+    return bool(data.get("units")) and all(u["status"] == "completed" for u in data["units"])
+
+
+def collect_if_done(run_path: Path | str) -> dict[str, int] | None:
+    """Once ALL units of the run went through - i.e. after the user's corrections in the UI - merge the run's
+    final outcome (LLM changes + user corrections) into LLMfeedback.json. Exactly once per run."""
+    path = Path(run_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("feedback_collected") or not run_done(data):
+        return None
+    res = collect_feedback(path)
+    if res is not None:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["feedback_collected"] = datetime.now().isoformat(timespec="seconds")
+        path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    return res
+
+
+def collect_feedback(run_path: Path | str) -> dict[str, int] | None:
+    """Merge this run's A/B LLM output into ../LLMEffects/LLMfeedback.json (unique pairs, +-1 weights kept)."""
+    try:
+        return fb_weights.merge_run(run_path)
+    except Exception as e:
+        print(f"Collecting LLM feedback failed: {e}", file=sys.stderr)
+        return None
+
+
+def llm_review(run_path: Path, unit_ids: list[int] | None = None, trigger: str = "run") -> str | None:
     """Hand the run to ../LLMEffects/review.py (separate process: its modules share names with ours).
-    Writes llm_review_<run_id>.json next to the run; a failure never breaks the run."""
+    Writes llm_review_<run_id>.json next to the run; a failure never breaks the run.
+    Returns an error message, or None on success (the message is also recorded in the run's warnings)."""
     import subprocess
     script = Path(__file__).resolve().parent.parent / "LLMEffects" / "review.py"
     try:
@@ -400,10 +468,23 @@ def llm_review(run_path: Path, unit_ids: list[int] | None = None, trigger: str =
         if unit_ids:
             cmd.append("--units=" + ",".join(map(str, unit_ids)))
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if r.returncode:
-            print(f"LLM review failed: {r.stderr.strip()[-500:]}", file=sys.stderr)
+        err = f"LLM review failed: {r.stderr.strip()[-500:]}" if r.returncode else None
     except Exception as e:
-        print(f"LLM review failed: {e}", file=sys.stderr)
+        err = f"LLM review failed: {e}"
+    if err:
+        print(err, file=sys.stderr)
+        _add_warning(run_path, err)
+    return err
+
+
+def _add_warning(run_path: Path, msg: str) -> None:
+    """Record a problem in the run file so the UI shows it (not only the server log)."""
+    try:
+        data = json.loads(Path(run_path).read_text(encoding="utf-8"))
+        data.setdefault("warnings", []).append(msg)
+        Path(run_path).write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    except Exception as e:  # never break the run over a warning
+        print(f"Could not record warning: {e}", file=sys.stderr)
 
 
 def main() -> None:
