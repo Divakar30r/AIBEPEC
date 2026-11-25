@@ -24,11 +24,19 @@ A) conversions - a value violates a field rule (see RULES). Convert it to an all
         unless a rule forces it;
       * this matters most for top-level (level 0) fields, because their choice drives every dependent field.
    The "to" value MUST be one of the allowed values (or inside the allowed range). Never invent values.
+   Range constraints (RangeInt, Range_YYYYMM, Range_YYYYMMDD, Range_C) are BOUNDARIES only, not a data type or
+   format check: keep the value in its current format / type (a date such as "2020-01-15" stays in that form,
+   even if the bounds are written as 20100101 .. 20250501); only move it inside the bounds. Do not report or
+   "fix" a value just because its format differs from how the bounds are written.
    These conversions are applied AUTOMATICALLY to the drafts, so only convert values that violate a rule.
 
 B) count_decisions - a COUNT RULE is broken (too many / too few related records with a value).
    Change field values of specific related records so the counts fit (e.g. a second "INS" -> "SPS" if allowed),
    or use "field": "__delete__" with "to": null to drop a surplus record. Stay consistent with A and the RULES.
+   Every count decision also names the combination it is about:
+     "count_field":  the related field whose records are counted, fully qualified (e.g. "PolStakes.StakerCodes.Unique");
+     "parent_field": the parent field the count limit depends on, fully qualified (e.g. "PolMaster.PolicyType");
+     "parent_value": that parent field's value in this unit (e.g. "DI").
 
 C) suggestions - real-world inconsistencies inside ONE unit (parent + its related records).
    * The suggested CHANGE must be on a field that has dependent rules (level > 0) or has no rule at all.
@@ -44,7 +52,8 @@ C) suggestions - real-world inconsistencies inside ONE unit (parent + its relate
 Reply with ONE JSON object and nothing else:
 {"units": {"<unit_id>": {
   "conversions":     [{"table": "", "record": null, "field": "", "from": "", "to": "", "reason": ""}],
-  "count_decisions": [{"table": "", "record": 0, "field": "", "from": "", "to": "", "reason": ""}],
+  "count_decisions": [{"table": "", "record": 0, "field": "", "from": "", "to": "", "count_field": "",
+                       "parent_field": "", "parent_value": "", "reason": ""}],
   "suggestions":     [{"table": "", "record": null, "field": "", "current": "", "suggested": "", "reason": ""}]
 }}}
 Include every unit_id given, with empty lists when nothing applies.
@@ -62,6 +71,9 @@ no matching combination = allowed; a disallow wins on overlap):
 
 FIELD DESCRIPTIONS:
 {field_desc}
+
+FORBIDDEN CONVERSIONS (rejected by the user - never propose these; "table.field: current -> value"):
+{blocked}
 
 UNITS (draft = populated fields only; violations = what failed validation):
 {units}

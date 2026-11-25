@@ -24,6 +24,7 @@ for p in (HERE, HERE.parent / "DAGRegistry", HERE.parent / "DataGenerator"):
 if sys.path[0] != str(HERE):
     sys.path.insert(0, str(HERE))  # our settings/llm win over DataGenerator's modules of the same name
 
+import feedback  # noqa: E402
 import prompts  # noqa: E402
 from context import compact_counts, compact_rules, dumps, unit_payload  # noqa: E402
 from llm import ask, parse_json  # noqa: E402
@@ -48,14 +49,19 @@ def _validate(draft: dict[str, Any], registry, count_dump) -> list[dict[str, Any
     return out + check_counts(count_dump, draft, attempted)
 
 
-def _screen(draft: dict[str, Any], conv: list[dict[str, Any]], registry) -> tuple[list, list]:
+def _screen(draft: dict[str, Any], conv: list[dict[str, Any]], registry,
+            blocked: set[tuple] = frozenset()) -> tuple[list, list]:
     """Keep only A) conversions whose target is a real value that passes its field rule.
-    Rejected ones (e.g. "__delete__" or a value not allowed under the current guards) are never applied."""
+    Rejected ones (e.g. "__delete__", a value not allowed under the current guards, or a pair the user set
+    to -1 in LLMfeedback.json) are never applied."""
     keep, rejected = [], []
     for c in conv:
         to = c.get("to")
         if to in (None, "") or str(to).startswith("__") or c.get("field") == "__delete__":
             rejected.append({**c, "rejected": "not a value (deletions belong in count_decisions)"})
+            continue
+        if (c.get("table"), c.get("field"), feedback.norm(c.get("from")), str(to)) in blocked:
+            rejected.append({**c, "rejected": "forbidden by the user (weight -1)"})
             continue
         fixed, bad = _apply(draft, keep + [c])
         cell = (c.get("table"), c.get("record"), c.get("field"))
@@ -145,13 +151,15 @@ def review(run_path: Path | str, cfg: Settings | None = None, print_prompt: bool
         return None
     registry = load_rules()
     count_dump = json.loads(cfg.count_dump.read_text(encoding="utf-8")) if cfg.count_dump.exists() else None
+    blocked = feedback.blocked_values()
     ctx = {"rules": dumps(compact_rules(cfg, run.get("levels", []))), "count_rules": dumps(compact_counts(cfg)),
-           "field_desc": cfg.field_desc.read_text(encoding="utf-8") if cfg.field_desc.exists() else "(none)"}
+           "field_desc": cfg.field_desc.read_text(encoding="utf-8") if cfg.field_desc.exists() else "(none)",
+           "blocked": "\n".join(f"{t}.{f}: {cur} -> {to}" for t, f, cur, to in sorted(blocked)) or "(none)"}
 
     results: dict[str, dict[str, Any]] = {}
-    pending, feedback = todo, ""
+    pending, retry_note = todo, ""  # not "feedback": that name is the imported module
     for rnd in range(1, cfg.max_rounds + 1):
-        answers = _call(pending, ctx, cfg, feedback, print_prompt,
+        answers = _call(pending, ctx, cfg, retry_note, print_prompt,
                         {"run_id": run["run_id"], "run_file": run_path.name, "trigger": trigger, "round": rnd,
                          "attempts": {str(u["unit_id"]): u.get("attempts", 0) for u in pending}})
         if print_prompt:
@@ -161,7 +169,7 @@ def review(run_path: Path | str, cfg: Settings | None = None, print_prompt: bool
             uid = str(u["unit_id"])
             a = answers.get(uid) or {}
             conv, cnt = a.get("conversions") or [], a.get("count_decisions") or []
-            conv, rejected = _screen(u["draft"], conv, registry)
+            conv, rejected = _screen(u["draft"], conv, registry, blocked)
             fixed, conflicts = _apply(u["draft"], conv + cnt)
             left = _validate(fixed, registry, count_dump)
             results[uid] = {"unit_id": u["unit_id"], "key": u["key"], "rounds": rnd,
@@ -176,7 +184,7 @@ def review(run_path: Path | str, cfg: Settings | None = None, print_prompt: bool
                                   "rejected_conversions": rejected}
         if not still:
             break
-        pending, feedback = still, prompts.FEEDBACK.format(remaining=dumps(remaining))
+        pending, retry_note = still, prompts.FEEDBACK.format(remaining=dumps(remaining))
     for r in results.values():
         if r["status"] == "unresolved":
             r["status"] = "skipped_conflict"  # not resolved within max_rounds: left for manual review
