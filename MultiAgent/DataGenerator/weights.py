@@ -7,7 +7,8 @@ Value pairs act while a field is filled; count pairs act after that, once the le
 Value pairs  (table, field, current value -> LLM value), applied when a source (CSV) value is copied in:
   positive weights are shares - e.g. Familyfloat -> CI 0.3 converts ~30% of such values with no LLM call;
   the rest keep the source value (and go to the LLM if they break a rule). Negative pairs are never applied
-  (-1 pairs are also forbidden to the LLM, see LLMEffects/review.py).
+  (-1 pairs are also forbidden to the LLM, see LLMEffects/review.py). "Option": "Archive" only hides a value
+  pair in the UI's list - it is still applied here, at its priority.
 
 Count pairs  (parent field = value, related field = value, Count), applied right after the related field is
 filled for all records of a unit:

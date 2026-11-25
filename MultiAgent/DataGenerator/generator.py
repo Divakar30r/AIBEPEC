@@ -146,8 +146,10 @@ def new_key(rng: random.Random, cfg: Config, used: set[str]) -> str:
 
 
 def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlsource: list[dict[str, Any]],
-             rng: random.Random, fake: Faker, weights: "fb_weights.Weights | None" = None) -> Unit:
-    """Validate-then-fill each level from start_lvl; halts the unit on the first violation."""
+             rng: random.Random, fake: Faker, weights: "fb_weights.Weights | None" = None,
+             keep: set[tuple] | None = None) -> Unit:
+    """Validate-then-fill each level from start_lvl; halts the unit on the first violation.
+    keep: (table, record or None, field) cells the reviewer set - never regenerated (still validated)."""
     parent, draft = cfg.parent, unit.draft
     dbf = load_db_formats(cfg)  # target -> DB-type format; every value is stored in it
     source_row: dict[tuple[str, int], dict[str, Any]] = {}  # one XLSource row per record keeps name/age coherent
@@ -167,6 +169,8 @@ def _advance(unit: Unit, start_lvl: int, cfg: Config, plan: Plan, registry, xlso
             for table, fld in nodes:
                 target = f"{table}.{fld}"
                 for idx, rec in records(table):
+                    if keep and (table, idx, fld) in keep:
+                        continue  # the reviewer's value stays; the rules still check it
                     ctx = {parent: draft[parent], table: rec}
                     src = source_row.setdefault((table, idx or 0), rng.choice(xlsource) if xlsource else {})
                     if target in src:                                               # B) CSV
@@ -238,6 +242,16 @@ def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan
     for f in fixes:  # values first: record indices refer to the draft as shown in the UI
         rec = draft[f["table"]] if f["record"] is None else draft[f["table"]][f["record"]]
         rec[f["field"]] = formats.convert(f["value"], dbf.get(f"{f['table']}.{f['field']}"))
+    # cells the reviewer set are kept when their level is (re)generated; indices follow the deletions below
+    gone = {t: sorted(set(i)) for t, i in (deletions or {}).items()}
+    keep = set()
+    for f in fixes:
+        r = f["record"]
+        if r is not None and f["table"] in gone:
+            if r in gone[f["table"]]:
+                continue
+            r -= sum(1 for d in gone[f["table"]] if d < r)
+        keep.add((f["table"], r, f["field"]))
     removed = []
     for table, idxs in (deletions or {}).items():
         if table == cfg.parent:
@@ -255,7 +269,7 @@ def rerun_unit(u: dict[str, Any], fixes: list[dict[str, Any]], cfg: Config, plan
                       (", ".join(f"{f['table']}.{f['field']}={f['value']!r}" for f in fixes) or "none") +
                       ("; deleted " + "; ".join(removed) if removed else ""))
     rng, fake = _rngs(cfg, seed, unit.unit_id, attempt)
-    unit = _advance(unit, start, cfg, plan, registry, xlsource, rng, fake)
+    unit = _advance(unit, start, cfg, plan, registry, xlsource, rng, fake, keep=keep)
     return {"unit_id": unit.unit_id, "key": unit.key, "status": unit.status,
             "halted_before_level": unit.halted_before_level, "levels_done": unit.levels_done,
             "violations": unit.violations, "notes": unit.notes, "draft": unit.draft, "attempts": attempt}

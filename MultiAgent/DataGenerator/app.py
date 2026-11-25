@@ -11,10 +11,11 @@ import importlib
 
 import count_rules
 import generator
+import review_logic
 import schema
 
 # Streamlit reruns app.py on save but keeps imported modules cached; reload so code changes apply.
-for _m in (count_rules, schema, generator):
+for _m in (count_rules, schema, generator, review_logic):
     importlib.reload(_m)
 from settings import load_config
 import Schemafetcher  # DBHandler (path added by settings)
@@ -119,8 +120,10 @@ if _done:
             VAL, CNT = FB["Value-based"], FB["Count-based"]
             weight_col = st.column_config.NumberColumn("Weightage", min_value=-1.0, max_value=1.0, step=0.05,
                                                        format="%.2f", help="-1 never, 0 no preference, +1 always")
-            v_opt_col = st.column_config.SelectboxColumn("Options", options=["Remove"], width="small",
-                                                         help="Remove + Save deletes this pair from the feedback list")
+            v_opt_col = st.column_config.SelectboxColumn(
+                "Options", options=["Remove", "Archive"], width="small",
+                help="Remove + Save deletes this pair. Archive: hidden in the React UI's list, still applied at its "
+                     "priority")
             c_opt_col = st.column_config.SelectboxColumn(
                 "Options", options=["Remove", fb_weights.ONLY, fb_weights.MAX], width="medium",
                 help=f"Remove: deleted on Save. '{fb_weights.ONLY}': exactly Count records with that value in ~share "
@@ -217,7 +220,8 @@ if _done:
 
             with t_val:
                 vdf = pd.DataFrame({
-                    "Options": pd.Series([None] * len(VAL), dtype="object"),
+                    "Options": pd.Series([r.get("Option") if r.get("Option") == "Archive" else None for r in VAL],
+                                         dtype="object"),  # keep Archive on Save
                     "Priority": range(1, len(VAL) + 1),
                     "Table / Field / current value": [f"{r['Table']} / {r['Field']} / {r['current_value']}" for r in VAL],
                     "LLM_value": [str(r["LLM_value"]) for r in VAL],
@@ -338,15 +342,12 @@ except (OSError, KeyError, json.JSONDecodeError):
 
 def llm_for(u: dict) -> dict | None:
     """The LLM review of this unit's current attempt (older attempts are stale)."""
-    r = LLM.get(u["unit_id"])
-    return r if r and r.get("attempts", 0) == u.get("attempts", 0) else None
+    return review_logic.llm_for(LLM, u)
 
 
 def llm_values(u: dict) -> dict:
     """(table, record, field) -> value proposed by the LLM (conversions + count decisions)."""
-    r = llm_for(u) or {}
-    return {(c.get("table"), c.get("record"), c.get("field")): c.get("to")
-            for c in (r.get("conversions") or []) + (r.get("count_decisions") or []) if c.get("field") != "__delete__"}
+    return review_logic.llm_values(llm_for(u))
 
 n_count = sum(1 for u in units_ for v in u["violations"] if v.get("kind") == "count")
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -422,11 +423,8 @@ def show(data) -> pd.DataFrame:
     return pd.DataFrame(data if isinstance(data, list) else [data]).astype("string")
 
 
-def cells(v: dict) -> list[tuple[str, int | None, str]]:
-    """(table, record, field) a reviewer can change for one violation; count errors expand to their records."""
-    if v.get("kind") == "count":
-        return [(v["table"], r, v["field"]) for r in v.get("records", [])]
-    return [(v["table"], v["record"], v["field"])]
+cells = review_logic.cells  # (table, record, field) a reviewer can change for one violation
+LIST_FIELDS = fb_weights._feedback_module().list_fields()  # only these can go into LLM feedback
 
 
 def highlight(table: str, violations: list[dict]):
@@ -448,40 +446,13 @@ except (OSError, KeyError, json.JSONDecodeError):
     st.warning(f"Registry dump not readable ({cfg.registry_dump}); correction fields fall back to free text.")
 
 
-def _ref(ref: str) -> tuple[str, str]:
-    table, _, fld = ref.partition(".")
-    return table, fld
-
-
 def allowed_for(table: str, fld: str, ctx: dict) -> tuple[str, object, bool] | None:
-    """(kind, spec, scoped) from registry_dump.json. Only branches whose guards match ctx are used;
-    if none match, all branches are offered (scoped=False)."""
-    rule = RULES.get(f"{table}.{fld}")
-    if not rule or not rule["branches"]:
-        return None
-    ok = [b for b in rule["branches"]
-          if all(generator.same(ctx.get(_ref(g)[0], {}).get(_ref(g)[1]), v) for g, v in b["guards"].items())]
-    use = ok or rule["branches"]
-    kind = use[0]["constraint"]
-    use = [b for b in use if b["constraint"] == kind]
-    if kind == "ListStr":
-        return kind, list(dict.fromkeys(x for b in use for x in b["allowed"])), bool(ok)
-    if kind in ("RangeInt", "Range_YYYYMM", "Range_YYYYMMDD"):
-        return kind, (min(b["allowed"][0] for b in use), max(b["allowed"][1] for b in use)), bool(ok)
-    return kind, use[0]["allowed"], bool(ok)
+    """(kind, spec, scoped) from registry_dump.json for this row context (see review_logic.allowed_for)."""
+    return review_logic.allowed_for(RULES, table, fld, ctx)
 
 
-_MISSING = object()
-
-
-def cell_value(u: dict, c: dict):
-    """Current draft value of a (table, record, field) reference, or _MISSING if it does not exist."""
-    try:
-        t, r = u["draft"][c.get("table")], c.get("record")
-        row = t if r is None else t[int(r)]
-        return row[c.get("field")] if c.get("field") in row else _MISSING
-    except (KeyError, IndexError, TypeError, ValueError):
-        return _MISSING
+_MISSING = review_logic.MISSING
+cell_value = review_logic.cell_value  # current draft value of a (table, record, field), or _MISSING
 
 
 DBF = load_db_formats(cfg)  # target -> db_format from mapping.json
@@ -517,7 +488,7 @@ def feedback_dialog(u: dict, v: dict, dd_key: str) -> None:
     else:
         st.markdown("**Count-based pair**")
         prow = u["draft"][cfg.parent]
-        options = [f"{cfg.parent}.{k}" for k in prow if k != cfg.key_field]
+        options = [f"{cfg.parent}.{k}" for k in prow if k != cfg.key_field and f"{cfg.parent}.{k}" in LIST_FIELDS]
         related = f"{t}.{f}"
         hint = next((c.get("parent_field") for c in rv.get("count_decisions") or []
                      if c.get("count_field") == related and c.get("parent_field") in options), None)
@@ -639,7 +610,7 @@ for u in flagged:
         # Add one of this unit's errors to the LLM feedback list (confirmed in a popup first).
         errs = {f"{'count' if v.get('kind') == 'count' else 'value'}: {v['table']}.{v['field']}"
                 + (f"[{v['record']}]" if v.get("record") is not None else "") + f" = {v['value']!r}": v
-                for v in u["violations"]}
+                for v in u["violations"] if f"{v['table']}.{v['field']}" in LIST_FIELDS}  # list-type fields only
         fb_key = f"dd_fb_{sfx}"
         fb_pick = head[-2].selectbox("Add error to LLM feedback", list(errs), index=None,
                                      placeholder="Add error to LLM feedback", label_visibility="collapsed",

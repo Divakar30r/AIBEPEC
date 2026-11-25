@@ -13,6 +13,10 @@ Merge: every pair is unique (see *_key). Weights of exactly -1 / +1 are never ov
 value-pair weights are refreshed to the pair's share in the latest run (capped at AUTO_CAP, so only the user
 sets +1). Number pairs and count pairs start at 0 and are left to the user.
 
+Only LIST-type fields (a ListStr rule in registry_dump.json) ever enter the list - value pairs by their field,
+count pairs by both the related field and the parent field (see list_fields / is_list_pair); add_pair refuses
+anything else.
+
 A count pair may carry "Option": "Only Possibility" (set in the UI's Options column; merges keep it) - see
 DataGenerator/weights.py: its share is predicted from the value pairs, "Prediction not enforcement".
 """
@@ -20,13 +24,14 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-PATH = HERE / "LLMfeedback.json"
+PATH = Path(os.environ.get("LLMFEEDBACK_PATH") or HERE / "LLMfeedback.json")  # env override: tests
 AUTO_CAP = 0.9
 REGISTRY_DUMP = HERE.parent / "DAGRegistry" / "registry_dump.json"
 
@@ -39,6 +44,18 @@ def _finite_lists(path: Path = REGISTRY_DUMP) -> dict[str, set[str]]:
     return {ref: {norm(v) for b in r["branches"] if b["constraint"] == "ListStr" for v in b["allowed"]}
             for ref, r in rules.items() if any(b["constraint"] == "ListStr" for b in r["branches"])}
 VALUE, COUNT = "Value-based", "Count-based"
+
+
+def list_fields() -> set[str]:
+    """'Table.Field' of every field with a list (ListStr) rule - the only fields LLM feedback may hold."""
+    return set(_finite_lists())
+
+
+def is_list_pair(section: str, row: dict[str, Any], lists: set[str] | None = None) -> bool:
+    lists = list_fields() if lists is None else lists
+    if section == VALUE:
+        return f"{row.get('Table')}.{row.get('Field')}" in lists
+    return row.get("RelatedField") in lists and row.get("Field") in lists
 
 
 def norm(v: Any) -> str:
@@ -170,8 +187,8 @@ def merge_run(run_path: Path | str, path: Path = PATH) -> dict[str, int]:
     allowed = _finite_lists()
     # only text pairs whose current value is NOT already one of the field's allowed values
     # (numbers depend on context; an allowed value was changed for a dependency reason, not a bad value)
-    vp = [p for p in vp if p["Type"] == "text"
-          and norm(p["current_value"]) not in allowed.get(f"{p['Table']}.{p['Field']}", set())]
+    vp = [p for p in vp if p["Type"] == "text" and f"{p['Table']}.{p['Field']}" in allowed  # list fields only
+          and norm(p["current_value"]) not in allowed[f"{p['Table']}.{p['Field']}"]]
     totals: dict[tuple, int] = {}
     hits: dict[tuple, int] = {}
     for p in vp:
@@ -199,7 +216,10 @@ def merge_run(run_path: Path | str, path: Path = PATH) -> dict[str, int]:
             added["overridden"] += 1
 
     cindex = {count_key(r): r for r in data[COUNT]}
+    lists = set(allowed)
     for p in count_pairs(run, review):
+        if not is_list_pair(COUNT, p, lists):
+            continue  # list fields only
         k = count_key(p)
         r = cindex.get(k)
         if r is None:
@@ -215,7 +235,11 @@ def merge_run(run_path: Path | str, path: Path = PATH) -> dict[str, int]:
 
 def add_pair(section: str, row: dict[str, Any], unit: dict[str, Any] | None = None, path: Path = PATH) -> None:
     """Add (or update in place) one pair from the UI. `unit` = metadata of a unit removed with it (Never, -1),
-    kept on the pair under "Units" so the removed data stays traceable."""
+    kept on the pair under "Units" so the removed data stays traceable. Only list-type fields (ValueError)."""
+    if not is_list_pair(section, row):
+        ref = f"{row.get('Table')}.{row.get('Field')}" if section == VALUE else \
+            f"{row.get('Field')} / {row.get('RelatedField')}"
+        raise ValueError(f"{ref}: only fields with a list (ListStr) rule can be added to LLM feedback")
     data = load(path)
     key = value_key if section == VALUE else count_key
     rows = data[section]

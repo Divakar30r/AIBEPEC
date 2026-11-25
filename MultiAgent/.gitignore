@@ -6,3 +6,5 @@ LLMEffects/logs/
 .csvLLMEffects/logs/
 *.csv
 LLMEffects/LLMfeedback.json
+node_modules/
+ReviewUI/frontend/dist/
