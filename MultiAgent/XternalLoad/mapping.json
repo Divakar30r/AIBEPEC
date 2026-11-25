@@ -4,132 +4,169 @@
       "target": "PolMaster.PolicyType",
       "csv_column": "policy_type",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolMaster.PolicyNumber",
       "csv_column": "policy_id",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolMaster.SystemDate",
-      "csv_column": null,
-      "confidence": "low",
-      "reason": "No exact match, but could be inferred from policy_start_date"
+      "csv_column": "policy_start_date",
+      "confidence": "high",
+      "reason": "Exact match",
+      "csv_format": "date:%Y-%m-%d",
+      "db_format": "Dates"
     },
     {
       "target": "PolMaster.EffectiveDate",
-      "csv_column": "policy_start_date",
-      "confidence": "high",
-      "reason": "Exact match"
+      "csv_column": null,
+      "confidence": "low",
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolMaster.ExpirationDate",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolMaster.PolicyStatus",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolMaster.Language",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolMaster.SumInsured",
       "csv_column": "sum_insured",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "integer",
+      "db_format": "number"
     },
     {
       "target": "PolMaster.ThirdParty",
-      "csv_column": null,
-      "confidence": "low",
-      "reason": "No exact match"
+      "csv_column": "agent_channel",
+      "confidence": "medium",
+      "reason": "Potential match, but requires verification",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolMaster.JurisdictionState",
       "csv_column": "state",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolMaster.Term",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolMaster.Frequency",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolStakes.PolicyNumber",
       "csv_column": "policy_id",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolStakes.StakerName",
       "csv_column": "customer_name",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolStakes.StakerAge",
       "csv_column": "age",
       "confidence": "high",
-      "reason": "Exact match"
+      "reason": "Exact match",
+      "csv_format": "integer",
+      "db_format": "number"
     },
     {
       "target": "PolStakes.StakerCodes",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolStakes.StakerContact.Address",
       "csv_column": "city",
       "confidence": "medium",
-      "reason": "City is part of address, not full address"
+      "reason": "Partial match, city instead of full address",
+      "csv_format": "text",
+      "db_format": "text"
     },
     {
       "target": "PolStakes.StakerContact.mobile",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolStakes.StakerContact.mail",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     },
     {
       "target": "PolStakes.StakerStatus",
       "csv_column": null,
       "confidence": "low",
-      "reason": "No exact match"
+      "reason": "No matching column",
+      "csv_format": null,
+      "db_format": null
     }
   ],
   "unmapped_csv_columns": [
     "aadhaar_masked",
-    "agent_channel",
+    "alcohol_units_per_week",
+    "annual_income_inr",
+    "bmi",
     "cashless_claim",
-    "co_pay_amount",
-    "non_payable_items",
-    "occupation_type",
-    "physical_activity_level",
-    "pincode",
     "claim_date",
     "deductible_amount",
     "diet_type",
@@ -143,28 +180,14 @@
     "icu_days",
     "length_of_stay",
     "marital_status",
+    "occupation_type",
+    "physical_activity_level",
     "post_hospitalization_expense",
     "pre_hospitalization_expense",
     "room_category",
     "stress_level_score",
     "tobacco_usage",
-    "total_claim_amount",
-    "annual_income_inr",
-    "bmi",
-    "alcohol_units_per_week"
+    "total_claim_amount"
   ],
-  "data_quality_issues": [
-    {
-      "column": "policy_start_date",
-      "issue": "No expiration date provided, which is required for completeness"
-    },
-    {
-      "column": "state",
-      "issue": "States are not in standard two-letter abbreviation format"
-    },
-    {
-      "column": "city",
-      "issue": "City names are used instead of full addresses"
-    }
-  ]
+  "data_quality_issues": []
 }

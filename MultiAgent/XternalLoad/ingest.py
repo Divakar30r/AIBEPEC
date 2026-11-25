@@ -1,4 +1,4 @@
-"""Chunk the CSV column-wise, embed with OpenAI, store in Postgres/pgvector.
+"""Chunk the CSV column-wise, embed with OpenAI, store in the vector DB (via DBHandler).
 
     python ingest.py             # chunk + embed + store
     python ingest.py --dry-run   # chunk only, no API / DB calls
@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 import chunker
 import embedder
-import store
-from config import settings
+from config import HERE, settings
+
+sys.path.insert(0, str(HERE.parent / "DBHandler"))
+import vector_store  # noqa: E402  (DBHandler: the only DB client)
 
 
 def main() -> None:
@@ -24,10 +27,10 @@ def main() -> None:
     if args.dry_run:
         return
     vectors = embedder.embed_texts([c.content for c in chunks])
-    with store.connect() as conn:
-        store.init_schema(conn)
-        store.upsert_chunks(conn, chunks, vectors)
-    print(f"stored in {settings.pg_db}.{settings.pg_table}")
+    with vector_store.connect() as conn:
+        vector_store.init_schema(conn)
+        vector_store.upsert_chunks(conn, chunks, vectors)
+    print(f"stored in {vector_store.VECTOR_DB.name}.{vector_store.VECTOR_DB.table}")
 
 
 if __name__ == "__main__":

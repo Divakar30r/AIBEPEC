@@ -52,13 +52,7 @@ class Settings:
     embed_dim: int = int(_env("EMBED_DIM", "1536"))
     embed_batch: int = int(_env("EMBED_BATCH", "64"))
 
-    # ---- postgres / pgvector ---------------------------------------------
-    pg_host: str = _env("PG_HOST", "localhost")
-    pg_port: int = int(_env("PG_PORT", "5432"))
-    pg_db: str = _env("PG_DB", "multiagent")
-    pg_user: str = _env("PG_USER", "postgres")
-    pg_password: str = _env("PG_PASSWORD", "")
-    pg_table: str = _env("PG_TABLE", "csv_column_chunks")
+    # Database settings (vector DB) live in ../DBHandler/.env - DBHandler is the only DB client.
 
     # ---- LLM: Hugging Face router, Featherless AI provider (OpenAI-compatible)
     hf_token: str = _env("HUGGINGFACEHUB_API_TOKEN", "")
@@ -75,11 +69,6 @@ class Settings:
 
     # ---- retrieval for schema matching -----------------------------------
     top_k_per_field: int = int(_env("TOP_K_PER_FIELD", "6"))
-
-    @property
-    def pg_dsn(self) -> str:
-        return (f"host={self.pg_host} port={self.pg_port} dbname={self.pg_db} "
-                f"user={self.pg_user} password={self.pg_password}")
 
 
 settings = Settings()
