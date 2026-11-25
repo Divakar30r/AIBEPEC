@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from masking import mask_draft
+from masking import withhold_draft
 from settings import Settings
 
 
@@ -27,8 +27,8 @@ def compact_counts(cfg: Settings) -> list[dict[str, Any]]:
 
 
 def unit_payload(units: list[dict[str, Any]], cfg: Settings) -> dict[str, Any]:
-    """Masked drafts (populated fields only, as stored) + their violations, keyed by unit_id."""
-    return {str(u["unit_id"]): {"draft": mask_draft(u["draft"], cfg.mask_fields),
+    """Drafts (populated fields only, masked fields withheld) + their violations, keyed by unit_id."""
+    return {str(u["unit_id"]): {"draft": withhold_draft(u["draft"], cfg.mask_fields),
                                 "violations": u["violations"],
                                 "halted_before_level": u["halted_before_level"]} for u in units}
 

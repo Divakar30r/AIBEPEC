@@ -5,6 +5,7 @@
     "PolStakes.StakerContact.mail"
   ],
   "max_rounds": 2,
+  "session_log": false,
   "paths": {
     "registry_dump": "../DAGRegistry/registry_dump.json",
     "count_dump": "../DAGRegistry/count_dump.json",

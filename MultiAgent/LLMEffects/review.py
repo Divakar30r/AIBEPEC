@@ -2,7 +2,8 @@
 
     python review.py [run_file] [--units=1,4] [--trigger=rerun] [--print-prompt]   # default: newest run_*.json
 
-Every LLM call is logged to logs/session_<run_id>_<ts>_r<round>.json (units sent, raw + parsed reply).
+Every LLM call is logged to logs/session_<run_id>_<ts>_r<round>.json (units sent, raw + parsed reply),
+unless "session_log": false in config.json.
 
 Round 1: one call for ALL halted units (A conversions, B count decisions, C suggestions).
 A+B are applied to a copy and re-validated locally (no DB). Units still failing get ONE more batched call;
@@ -135,7 +136,8 @@ def _call(units, ctx: dict[str, str], cfg: Settings, feedback: str, show: bool,
         raise
     finally:
         session["finished_at"] = datetime.now().isoformat(timespec="seconds")
-        _log(session)
+        if cfg.session_log:
+            _log(session)
 
 
 def review(run_path: Path | str, cfg: Settings | None = None, print_prompt: bool = False,
@@ -197,7 +199,7 @@ def review(run_path: Path | str, cfg: Settings | None = None, print_prompt: bool
     live = {str(u["unit_id"]) for u in run["units"]}
     out.write_text(json.dumps({
         "run_id": run["run_id"], "run_file": run_path.name, "model": cfg.hf_model,
-        "reviewed_at": datetime.now().isoformat(timespec="seconds"), "masked_fields": list(cfg.mask_fields),
+        "reviewed_at": datetime.now().isoformat(timespec="seconds"), "withheld_fields": list(cfg.mask_fields),
         "units": sorted((v for k, v in merged.items() if k in live), key=lambda v: v["unit_id"])},
         indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     return out

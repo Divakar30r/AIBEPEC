@@ -1,6 +1,7 @@
 """Cumulative LLM feedback (LLMfeedback.json), collected once a run is FINISHED (every unit through, after the
 user's corrections in the UI): value pairs = original value -> final value (LLM A) changes + user corrections),
-count pairs = halted count state ("problem") and the finished state ("final").
+count pairs = the finished state of a unit that went through ("final"), or the count state that
+broke a unit the user removed ("problem") - never both for one unit.
 
 The user weighs each pair in the UI (-1 never .. 0 no preference .. +1 always); the NEXT run uses them
 (DataGenerator/weights.py) so the same pairs need no LLM call. Nothing here looks at the rule files -
@@ -11,6 +12,9 @@ pairs are purely what the LLM produced.
 Merge: every pair is unique (see *_key). Weights of exactly -1 / +1 are never overwritten. Other text
 value-pair weights are refreshed to the pair's share in the latest run (capped at AUTO_CAP, so only the user
 sets +1). Number pairs and count pairs start at 0 and are left to the user.
+
+A count pair may carry "Option": "Only Possibility" (set in the UI's Options column; merges keep it) - see
+DataGenerator/weights.py: its share is predicted from the value pairs, "Prediction not enforcement".
 """
 from __future__ import annotations
 
@@ -114,28 +118,21 @@ def value_pairs(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[tuple]]
 
 
 def count_pairs(run: dict[str, Any], review: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """For units that halted on a count error: the halted state ("problem") and the finished unit's state
-    ("final") as (parent field = value, related field = value, number of related records). The parent field
-    each count depends on comes from the LLM's B) decisions (count_field -> parent_field)."""
+    """One state per unit, as (parent field = value, related field = value, number of related records):
+      * unit went through (after the human's edits in the UI) -> its FINAL counts ("final");
+      * unit was removed in the UI                            -> the counts that broke it ("problem").
+    Only units that hit a count error are used. The parent field each count depends on comes from the LLM's
+    B) decisions (count_field -> parent_field)."""
     parent_of: dict[int, dict[str, str]] = {}
     for rv in (review or {}).get("units", []):
         for c in rv.get("count_decisions") or []:
             if c.get("count_field") and c.get("parent_field"):
                 parent_of.setdefault(rv["unit_id"], {})[c["count_field"]] = c["parent_field"]
     out = []
-    for u in run["units"]:
+    for u in run["units"]:  # went through: final state only
         pmap = parent_of.get(u["unit_id"], {})
-        halts = u.get("halts", [])
-        if not pmap or not halts:
+        if not pmap or not u.get("halts"):
             continue
-        for h in halts:
-            for v in h["count_violations"]:
-                rel = f"{v['table']}.{v['field']}"
-                pf = pmap.get(rel)
-                if pf:
-                    out.append({"RelatedTable": v["table"], "RelatedField": rel, "RelatedFieldValue": v["value"],
-                                "Field": pf, "value": h["parent"].get(pf.split(".", 1)[1]), "Count": v["count"],
-                                "Note": "problem"})
         prow = next((d for d in u["draft"].values() if isinstance(d, dict)), {})
         for rel, pf in pmap.items():
             t, _, f = rel.partition(".")
@@ -146,6 +143,16 @@ def count_pairs(run: dict[str, Any], review: dict[str, Any] | None) -> list[dict
                 out.append({"RelatedTable": t, "RelatedField": rel, "RelatedFieldValue": val, "Field": pf,
                             "value": prow.get(pf.split(".", 1)[1]),
                             "Count": sum(1 for r in recs if str(r.get(f)) == val), "Note": "final"})
+    for u in run.get("removed_units", []):  # removed: the count errors it had when it was removed
+        pmap = parent_of.get(u["unit_id"], {})
+        prow = next((d for d in u["draft"].values() if isinstance(d, dict)), {})
+        for v in u.get("violations", []):
+            rel = f"{v['table']}.{v['field']}"
+            pf = pmap.get(rel)
+            if v.get("kind") == "count" and pf:
+                out.append({"RelatedTable": v["table"], "RelatedField": rel, "RelatedFieldValue": v["value"],
+                            "Field": pf, "value": prow.get(pf.split(".", 1)[1]), "Count": v["count"],
+                            "Note": "problem"})
     return out
 
 
